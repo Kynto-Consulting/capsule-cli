@@ -1,4 +1,4 @@
-module github.com/kynto/capsule/cli
+module github.com/kynto-consulting/capsule/cli
 
 go 1.25.0
 
