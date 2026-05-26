@@ -72,4 +72,5 @@ func (c *Client) do(method, path string, body, out any) error {
 func (c *Client) Post(path string, body, out any) error  { return c.do("POST", path, body, out) }
 func (c *Client) Get(path string, out any) error          { return c.do("GET", path, nil, out) }
 func (c *Client) Put(path string, body, out any) error   { return c.do("PUT", path, body, out) }
+func (c *Client) Patch(path string, body, out any) error { return c.do("PATCH", path, body, out) }
 func (c *Client) Delete(path string) error                { return c.do("DELETE", path, nil, nil) }
