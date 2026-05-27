@@ -422,19 +422,13 @@ func pollDeployment(orgID, projectID, deployID string) error {
 			}
 			fmt.Printf("\nDeployment complete in %s\n", elapsed)
 			fmt.Printf("ID: %s\n", deployID)
-			// Fetch org slug and project slug to construct the app URL
+			// Fetch project slug to construct the app URL
 			var projInfo struct {
 				Slug string `json:"slug"`
 			}
 			projPath := fmt.Sprintf("/api/v1/orgs/%s/projects/%s", orgID, projectID)
 			if err2 := apiClient.Get(projPath, &projInfo); err2 == nil && projInfo.Slug != "" {
-				var orgInfo struct {
-					Slug string `json:"slug"`
-				}
-				orgPath := fmt.Sprintf("/api/v1/orgs/%s", orgID)
-				if err3 := apiClient.Get(orgPath, &orgInfo); err3 == nil && orgInfo.Slug != "" {
-					fmt.Printf("URL: https://api.tumi-ai.com/apps/%s/%s/\n", orgInfo.Slug, projInfo.Slug)
-				}
+				fmt.Printf("URL: https://%s.apps.tumi-ai.com\n", projInfo.Slug)
 			}
 			return nil
 		}
