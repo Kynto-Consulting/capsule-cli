@@ -141,7 +141,11 @@ var logsLambdaCmd = &cobra.Command{
 		tail, _ := cmd.Flags().GetInt("tail")
 		follow, _ := cmd.Flags().GetBool("follow")
 
+		sourceID, _ := cmd.Flags().GetString("source-id")
 		path := fmt.Sprintf("/api/v1/orgs/%s/projects/%s/logs/lambda?tail=%d", orgID, projectID, tail)
+		if sourceID != "" {
+			path += "&source_id=" + sourceID
+		}
 
 		printLogLines := func() error {
 			var resp struct {
@@ -157,10 +161,15 @@ var logsLambdaCmd = &cobra.Command{
 			}
 			for _, l := range resp.Data {
 				color := levelColor(l.Level)
-				fmt.Printf("[%s] %s%-5s\033[0m %s\n",
+				src := ""
+				if l.SourceID != "" {
+					src = fmt.Sprintf("\033[2m[%s]\033[0m ", shortID(l.SourceID))
+				}
+				fmt.Printf("\033[2m%s\033[0m %s%-5s\033[0m %s%s\n",
 					l.CreatedAt.Format("15:04:05"),
 					color,
 					l.Level,
+					src,
 					l.Message,
 				)
 			}
@@ -241,7 +250,11 @@ var logsStorageCmd = &cobra.Command{
 		tail, _ := cmd.Flags().GetInt("tail")
 		follow, _ := cmd.Flags().GetBool("follow")
 
+		sourceID, _ := cmd.Flags().GetString("source-id")
 		path := fmt.Sprintf("/api/v1/orgs/%s/projects/%s/logs/storage?tail=%d", orgID, projectID, tail)
+		if sourceID != "" {
+			path += "&source_id=" + sourceID
+		}
 
 		printLogLines := func() error {
 			var resp struct {
@@ -257,11 +270,15 @@ var logsStorageCmd = &cobra.Command{
 			}
 			for _, l := range resp.Data {
 				color := levelColor(l.Level)
-				fmt.Printf("[%s] %s%-5s\033[0m %-30s %s\n",
+				src := ""
+				if l.SourceID != "" {
+					src = fmt.Sprintf("\033[2m[%s]\033[0m ", shortID(l.SourceID))
+				}
+				fmt.Printf("\033[2m%s\033[0m %s%-5s\033[0m %s%s\n",
 					l.CreatedAt.Format("15:04:05"),
 					color,
 					l.Level,
-					l.SourceID,
+					src,
 					l.Message,
 				)
 			}
@@ -296,7 +313,11 @@ var logsCronCmd = &cobra.Command{
 		tail, _ := cmd.Flags().GetInt("tail")
 		follow, _ := cmd.Flags().GetBool("follow")
 
+		sourceID, _ := cmd.Flags().GetString("source-id")
 		path := fmt.Sprintf("/api/v1/orgs/%s/projects/%s/logs/cron?tail=%d", orgID, projectID, tail)
+		if sourceID != "" {
+			path += "&source_id=" + sourceID
+		}
 
 		printLogLines := func() error {
 			var resp struct {
@@ -312,10 +333,15 @@ var logsCronCmd = &cobra.Command{
 			}
 			for _, l := range resp.Data {
 				color := levelColor(l.Level)
-				fmt.Printf("[%s] %s%-5s\033[0m %s\n",
+				src := ""
+				if l.SourceID != "" {
+					src = fmt.Sprintf("\033[2m[%s]\033[0m ", shortID(l.SourceID))
+				}
+				fmt.Printf("\033[2m%s\033[0m %s%-5s\033[0m %s%s\n",
 					l.CreatedAt.Format("15:04:05"),
 					color,
 					l.Level,
+					src,
 					l.Message,
 				)
 			}
@@ -340,6 +366,16 @@ var logsCronCmd = &cobra.Command{
 // formatLogLine returns a log line with a timestamp prefix.
 func formatLogLine(line string) string {
 	return fmt.Sprintf("[%s] %s", time.Now().Format("15:04:05"), line)
+}
+
+// shortID trims long container/bucket names to a readable form.
+func shortID(id string) string {
+	// "capsule-app-3fd03737a421" → "3fd03737a421"
+	// "s3:capsule-static-348973061281" → "s3:capsule-static"
+	if len(id) > 24 {
+		return id[:24]
+	}
+	return id
 }
 
 // levelColor returns an ANSI color code for the log level.
@@ -371,6 +407,13 @@ func init() {
 		logsRuntimeCmd, logsLambdaCmd, logsWorkersCmd, logsStorageCmd, logsCronCmd,
 	} {
 		c.Flags().Int("tail", 100, "Number of log entries to fetch (max 1000)")
+	}
+
+	// --source-id flag for per-resource filtering
+	for _, c := range []*cobra.Command{
+		logsLambdaCmd, logsStorageCmd, logsCronCmd,
+	} {
+		c.Flags().String("source-id", "", "Filter logs to a specific resource (function, bucket, cron job ID)")
 	}
 
 	logsCmd.AddCommand(logsRuntimeCmd, logsBuildCmd, logsLambdaCmd, logsWorkersCmd, logsStorageCmd, logsCronCmd)
