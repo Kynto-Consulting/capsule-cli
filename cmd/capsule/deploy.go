@@ -766,10 +766,11 @@ var deployCmd = &cobra.Command{
 		// --- Trigger deployment ---
 		fmt.Println("  Triggering deployment...")
 		body := map[string]string{
-			"version":    "cli",
-			"git_sha":    sha,
-			"branch":     branch,
-			"source_key": sourceKey,
+			"version":        "cli",
+			"git_sha":        sha,
+			"branch":         branch,
+			"source_key":     sourceKey,
+			"build_strategy": pc.DeployType,
 		}
 		var resp deployment
 		if err := apiClient.Post(
