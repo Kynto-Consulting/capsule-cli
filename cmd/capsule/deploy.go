@@ -626,13 +626,21 @@ func pollDeployment(orgID, projectID, deployID string) error {
 				return fmt.Errorf("deployment failed")
 			}
 			fmt.Printf("\n✅  %s  %s\n", d.Status, elapsed)
-			// Fetch project slug to construct the app URL
+			// Fetch project info for URL + domain hints
 			var projInfo struct {
-				Slug string `json:"slug"`
+				Slug       string `json:"slug"`
+				DeployType string `json:"deploy_type"`
 			}
 			projPath := fmt.Sprintf("/api/v1/orgs/%s/projects/%s", orgID, projectID)
 			if err2 := apiClient.Get(projPath, &projInfo); err2 == nil && projInfo.Slug != "" {
-				fmt.Printf("URL: https://%s.apps.tumi-ai.com\n", projInfo.Slug)
+				appURL := fmt.Sprintf("https://%s.apps.tumi-ai.com", projInfo.Slug)
+				fmt.Println()
+				fmt.Printf("  🌐  %s\n", appURL)
+				fmt.Println()
+				fmt.Println("  Custom domain (optional):")
+				fmt.Printf("    1. Point your DNS:  CNAME  your-domain.com  →  %s.apps.tumi-ai.com\n", projInfo.Slug)
+				fmt.Printf("    2. capsule domains add --org %s --project %s --domain your-domain.com\n", orgID, projectID)
+				fmt.Printf("    3. capsule domains verify --org %s --project %s --domain-id <id>\n", orgID, projectID)
 			}
 			return nil
 		}
