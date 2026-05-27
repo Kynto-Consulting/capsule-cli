@@ -21,7 +21,7 @@ type deploymentsAPIItem struct {
 	CreatedAt   string  `json:"created_at"`
 	StartedAt   *string `json:"started_at"`
 	CompletedAt *string `json:"completed_at"`
-	HostPort    int     `json:"host_port"`
+	HostPort    *int    `json:"host_port"`
 	SourceKey   *string `json:"source_key"`
 }
 
@@ -61,9 +61,9 @@ func formatAge(ts string) string {
 }
 
 // deploymentURL returns the URL for a deployment given its host port.
-func deploymentURL(hostPort int) string {
-	if hostPort > 0 {
-		return fmt.Sprintf("http://13.218.92.228:%d", hostPort)
+func deploymentURL(hostPort *int) string {
+	if hostPort != nil && *hostPort > 0 {
+		return fmt.Sprintf("http://13.218.92.228:%d", *hostPort)
 	}
 	return "—"
 }
@@ -169,7 +169,7 @@ var deploymentsGetCmd = &cobra.Command{
 		if d.CompletedAt != nil {
 			fmt.Fprintf(w, "Completed\t%s\n", formatAge(*d.CompletedAt))
 		}
-		if d.HostPort > 0 {
+		if d.HostPort != nil && *d.HostPort > 0 {
 			fmt.Fprintf(w, "URL\t%s\n", deploymentURL(d.HostPort))
 		}
 		return w.Flush()
