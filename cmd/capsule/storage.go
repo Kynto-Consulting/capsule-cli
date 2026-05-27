@@ -49,14 +49,19 @@ var storageCreateCmd = &cobra.Command{
 			return nil
 		}
 
-		body := map[string]string{"name": name}
+		public, _ := cmd.Flags().GetBool("public")
+		body := map[string]any{"name": name, "public": public}
 		var resp map[string]any
 		path := fmt.Sprintf("/api/v1/orgs/%s/projects/%s/storage", orgID, projectID)
 		if err := apiClient.Post(path, body, &resp); err != nil {
 			return err
 		}
 
-		fmt.Printf("Created S3 Bucket %s (Status: %s)\n", resp["db_name"], resp["status"])
+		visibility := "private"
+		if public {
+			visibility = "public"
+		}
+		fmt.Printf("Created S3 Bucket %s (%s) — Status: %s\n", resp["db_name"], visibility, resp["status"])
 		return nil
 	},
 }
@@ -179,6 +184,7 @@ func init() {
 	storageCreateCmd.Flags().String("org", "", "Org ID")
 	storageCreateCmd.Flags().String("project", "", "Project ID")
 	storageCreateCmd.Flags().String("name", "", "Bucket reference name")
+	storageCreateCmd.Flags().Bool("public", false, "Allow public read access (for hosting public assets)")
 
 	storageListCmd.Flags().String("org", "", "Org ID")
 	storageListCmd.Flags().String("project", "", "Project ID")
