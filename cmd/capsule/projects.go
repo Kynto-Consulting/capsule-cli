@@ -80,29 +80,6 @@ var projectsCreateCmd = &cobra.Command{
 	},
 }
 
-var deployCmd = &cobra.Command{
-	Use:   "deploy",
-	Short: "Trigger a deployment",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		orgID, _ := cmd.Flags().GetString("org")
-		if orgID == "" {
-			orgID = cfg.OrgID
-		}
-		projectID, _ := cmd.Flags().GetString("project")
-		sha, _ := cmd.Flags().GetString("sha")
-		if orgID == "" || projectID == "" {
-			return fmt.Errorf("--org and --project are required")
-		}
-		body := map[string]string{"version": "cli", "git_sha": sha}
-		var resp map[string]any
-		if err := apiClient.Post(fmt.Sprintf("/api/v1/orgs/%s/projects/%s/deployments", orgID, projectID), body, &resp); err != nil {
-			return err
-		}
-		fmt.Printf("Deployment triggered: %s (status: %s)\n", resp["id"], resp["status"])
-		return nil
-	},
-}
-
 func init() {
 	projectsListCmd.Flags().String("org", "", "Org ID")
 	projectsCreateCmd.Flags().String("org", "", "Org ID")
@@ -112,9 +89,4 @@ func init() {
 	projectsCreateCmd.Flags().String("repo", "", "Repository URL")
 	projectsCmd.AddCommand(projectsListCmd, projectsCreateCmd)
 	rootCmd.AddCommand(projectsCmd)
-
-	deployCmd.Flags().String("org", "", "Org ID")
-	deployCmd.Flags().String("project", "", "Project ID")
-	deployCmd.Flags().String("sha", "", "Git SHA")
-	rootCmd.AddCommand(deployCmd)
 }

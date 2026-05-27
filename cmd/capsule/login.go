@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/kynto/capsule/cli/internal/config"
+	"github.com/kynto-consulting/capsule/cli/internal/config"
 )
 
 var loginCmd = &cobra.Command{
