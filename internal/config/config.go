@@ -14,9 +14,10 @@ const (
 )
 
 type Config struct {
-	APIURL string `mapstructure:"api_url"`
-	Token  string `mapstructure:"token"`
-	OrgID  string `mapstructure:"org_id"`
+	APIURL       string `mapstructure:"api_url"`
+	Token        string `mapstructure:"token"`
+	RefreshToken string `mapstructure:"refresh_token"`
+	OrgID        string `mapstructure:"org_id"`
 }
 
 func Load() (*Config, error) {
@@ -49,6 +50,7 @@ func Save(cfg *Config) error {
 
 	viper.Set("api_url", cfg.APIURL)
 	viper.Set("token", cfg.Token)
+	viper.Set("refresh_token", cfg.RefreshToken)
 	viper.Set("org_id", cfg.OrgID)
 
 	return viper.WriteConfigAs(filepath.Join(dir, configFile))

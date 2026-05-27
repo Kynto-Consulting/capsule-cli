@@ -2,21 +2,123 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/kynto-consulting/capsule/cli/internal/config"
 	"github.com/kynto-consulting/capsule/cli/internal/client"
+	"github.com/kynto-consulting/capsule/cli/internal/config"
 )
 
 var (
-	cfg    *config.Config
+	cfg       *config.Config
 	apiClient *client.Client
 )
+
+// jwtExpired returns true if the JWT access token is expired or unparseable.
+func jwtExpired(token string) bool {
+	if token == "" {
+		return true
+	}
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return true
+	}
+	// JWT payload is base64url encoded (no padding)
+	payload := parts[1]
+	// Add padding if needed
+	switch len(payload) % 4 {
+	case 2:
+		payload += "=="
+	case 3:
+		payload += "="
+	}
+	data, err := base64.URLEncoding.DecodeString(payload)
+	if err != nil {
+		// Also try RawURLEncoding (no padding)
+		data, err = base64.RawURLEncoding.DecodeString(parts[1])
+		if err != nil {
+			return true
+		}
+	}
+	var claims struct {
+		Exp int64 `json:"exp"`
+	}
+	if err := json.Unmarshal(data, &claims); err != nil {
+		return true
+	}
+	if claims.Exp == 0 {
+		return false // no exp claim — assume valid
+	}
+	return time.Now().Unix() >= claims.Exp
+}
+
+// refreshTokenIfNeeded checks whether the stored access token is expired and,
+// if so, exchanges the refresh token for a new pair and persists them.
+// It updates cfg.Token in-place so the caller can use the fresh token.
+func refreshTokenIfNeeded(apiURL string) {
+	if !jwtExpired(cfg.Token) {
+		return
+	}
+	if cfg.RefreshToken == "" {
+		return
+	}
+
+	type refreshReq struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	type refreshResp struct {
+		Tokens struct {
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+		} `json:"tokens"`
+	}
+
+	b, err := json.Marshal(refreshReq{RefreshToken: cfg.RefreshToken})
+	if err != nil {
+		return
+	}
+	req, err := http.NewRequest("POST", apiURL+"/api/v1/auth/refresh", bytes.NewReader(b))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		_, _ = io.ReadAll(resp.Body)
+		return
+	}
+
+	var rr refreshResp
+	if err := json.NewDecoder(resp.Body).Decode(&rr); err != nil {
+		return
+	}
+
+	if rr.Tokens.AccessToken == "" {
+		return
+	}
+
+	cfg.Token = rr.Tokens.AccessToken
+	if rr.Tokens.RefreshToken != "" {
+		cfg.RefreshToken = rr.Tokens.RefreshToken
+	}
+	_ = config.Save(cfg)
+}
 
 var rootCmd = &cobra.Command{
 	Use:   "capsule",
@@ -49,6 +151,7 @@ var rootCmd = &cobra.Command{
 			}
 			apiURL = cfg.APIURL
 		}
+		refreshTokenIfNeeded(apiURL)
 		apiClient = client.New(apiURL, cfg.Token)
 		return nil
 	},

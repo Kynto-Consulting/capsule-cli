@@ -584,12 +584,16 @@ var statusEmoji = map[string]string{
 }
 
 func pollDeployment(orgID, projectID, deployID string) error {
+	return pollDeploymentWithTimeout(orgID, projectID, deployID, 10*time.Minute)
+}
+
+func pollDeploymentWithTimeout(orgID, projectID, deployID string, timeout time.Duration) error {
 	path := fmt.Sprintf("/api/v1/orgs/%s/projects/%s/deployments/%s", orgID, projectID, deployID)
 	lastStatus := ""
 	start := time.Now()
 	dots := 0
 
-	terminal := []string{"running", "failed", "cancelled", "success"}
+	terminal := []string{"success", "failed", "cancelled", "error", "timeout"}
 	isTerminal := func(s string) bool {
 		for _, t := range terminal {
 			if s == t {
@@ -600,6 +604,12 @@ func pollDeployment(orgID, projectID, deployID string) error {
 	}
 
 	for {
+		if time.Since(start) > timeout {
+			fmt.Println()
+			fmt.Println("Timed out waiting for deployment (use --timeout to extend)")
+			os.Exit(1)
+		}
+
 		var d deployment
 		if err := apiClient.Get(path, &d); err != nil {
 			return err
@@ -791,8 +801,15 @@ var deployCmd = &cobra.Command{
 
 		fmt.Printf("⏳  queued  0s\n")
 
+		// Parse --timeout flag (default 10m)
+		timeoutStr, _ := cmd.Flags().GetString("timeout")
+		pollTimeout, err := time.ParseDuration(timeoutStr)
+		if err != nil || pollTimeout <= 0 {
+			pollTimeout = 10 * time.Minute
+		}
+
 		// Poll real-time
-		return pollDeployment(pc.OrgID, pc.ProjectID, resp.ID)
+		return pollDeploymentWithTimeout(pc.OrgID, pc.ProjectID, resp.ID, pollTimeout)
 	},
 }
 
@@ -811,6 +828,7 @@ func init() {
 	deployCmd.Flags().String("project", "", "Project ID (overrides .capsule.json)")
 	deployCmd.Flags().String("sha", "", "Git SHA override")
 	deployCmd.Flags().BoolP("yes", "y", false, "Skip all confirmation prompts")
+	deployCmd.Flags().String("timeout", "10m", "Maximum time to wait for deployment (e.g. 5m, 30m, 1h)")
 	rootCmd.AddCommand(deployCmd)
 	rootCmd.AddCommand(linkCmd)
 }

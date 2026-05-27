@@ -60,11 +60,9 @@ func formatAge(ts string) string {
 	}
 }
 
-// deploymentURL returns the URL for a deployment given its host port.
+// deploymentURL is kept for backwards compatibility but no longer emits
+// an instance-specific URL (the host port is internal and not user-facing).
 func deploymentURL(hostPort *int) string {
-	if hostPort != nil && *hostPort > 0 {
-		return fmt.Sprintf("http://13.218.92.228:%d", *hostPort)
-	}
 	return "—"
 }
 
@@ -206,7 +204,8 @@ var deploymentsLogsCmd = &cobra.Command{
 			"success":   true,
 			"failed":    true,
 			"cancelled": true,
-			"running":   true,
+			"error":     true,
+			"timeout":   true,
 		}
 
 		printLogs := func(logs []buildLogItem, seen map[string]bool) {
