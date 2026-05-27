@@ -23,14 +23,15 @@ import (
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
+var stdinReader = bufio.NewReader(os.Stdin)
+
 func prompt(label, defaultVal string) string {
 	if defaultVal != "" {
 		fmt.Printf("%s [%s]: ", label, defaultVal)
 	} else {
 		fmt.Printf("%s: ", label)
 	}
-	r := bufio.NewReader(os.Stdin)
-	line, _ := r.ReadString('\n')
+	line, _ := stdinReader.ReadString('\n')
 	val := strings.TrimSpace(line)
 	if val == "" {
 		return defaultVal
@@ -44,8 +45,7 @@ func confirm(label string, defaultYes bool) bool {
 		def = "y/N"
 	}
 	fmt.Printf("%s [%s] ", label, def)
-	r := bufio.NewReader(os.Stdin)
-	line, _ := r.ReadString('\n')
+	line, _ := stdinReader.ReadString('\n')
 	val := strings.ToLower(strings.TrimSpace(line))
 	if val == "" {
 		return defaultYes
@@ -649,9 +649,10 @@ var deployCmd = &cobra.Command{
 	Long:  "Deploy the project linked to the current directory. Runs interactive setup if not yet linked.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cwd, _ := os.Getwd()
+		yes, _ := cmd.Flags().GetBool("yes")
 
 		// Confirm deploy directory
-		if !confirm(fmt.Sprintf("? Deploy from %q?", cwd), true) {
+		if !yes && !confirm(fmt.Sprintf("? Deploy from %q?", cwd), true) {
 			return fmt.Errorf("aborted")
 		}
 		fmt.Println()
@@ -801,6 +802,7 @@ func init() {
 	deployCmd.Flags().String("org", "", "Org ID (overrides .capsule.json)")
 	deployCmd.Flags().String("project", "", "Project ID (overrides .capsule.json)")
 	deployCmd.Flags().String("sha", "", "Git SHA override")
+	deployCmd.Flags().BoolP("yes", "y", false, "Skip all confirmation prompts")
 	rootCmd.AddCommand(deployCmd)
 	rootCmd.AddCommand(linkCmd)
 }
