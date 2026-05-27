@@ -1,10 +1,16 @@
 package main
 
 import (
+	"archive/tar"
 	"bufio"
+	"bytes"
+	"compress/gzip"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -62,6 +68,16 @@ func gitBranch() string {
 	return strings.TrimSpace(string(out))
 }
 
+func formatBytes(n int) string {
+	if n < 1024 {
+		return fmt.Sprintf("%d B", n)
+	}
+	if n < 1024*1024 {
+		return fmt.Sprintf("%.1f KB", float64(n)/1024)
+	}
+	return fmt.Sprintf("%.1f MB", float64(n)/(1024*1024))
+}
+
 // ── types ────────────────────────────────────────────────────────────────────
 
 type orgItem struct {
@@ -83,6 +99,168 @@ type deployment struct {
 	Status    string `json:"status"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
+}
+
+// ── source archive ───────────────────────────────────────────────────────────
+
+// createSourceArchive tries git archive first, then falls back to manual walk.
+func createSourceArchive(dir string) ([]byte, error) {
+	cmd := exec.Command("git", "archive", "--format=tar.gz", "HEAD")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err == nil && len(out) > 0 {
+		return out, nil
+	}
+	return createTarGzManual(dir)
+}
+
+// loadGitignorePatterns reads .gitignore in dir and returns non-comment patterns.
+func loadGitignorePatterns(dir string) []string {
+	f, err := os.Open(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	var patterns []string
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		patterns = append(patterns, line)
+	}
+	return patterns
+}
+
+// matchesGitignore returns true if name matches any of the given patterns.
+func matchesGitignore(patterns []string, relPath string) bool {
+	base := filepath.Base(relPath)
+	for _, pat := range patterns {
+		// Try full relative path match
+		if matched, _ := filepath.Match(pat, relPath); matched {
+			return true
+		}
+		// Try base name match
+		if matched, _ := filepath.Match(pat, base); matched {
+			return true
+		}
+		// Prefix directory match (e.g. "dist/")
+		trimmed := strings.TrimSuffix(pat, "/")
+		if strings.HasPrefix(relPath, trimmed+string(filepath.Separator)) || relPath == trimmed {
+			return true
+		}
+	}
+	return false
+}
+
+var skipDirs = map[string]bool{
+	".git":         true,
+	".svn":         true,
+	"node_modules": true,
+	"vendor":       true,
+}
+
+func createTarGzManual(dir string) ([]byte, error) {
+	patterns := loadGitignorePatterns(dir)
+
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
+
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil // skip unreadable entries
+		}
+
+		rel, err := filepath.Rel(dir, path)
+		if err != nil || rel == "." {
+			return nil
+		}
+
+		// Normalise to forward slashes for matching
+		relSlash := filepath.ToSlash(rel)
+
+		// Skip hidden/vendor dirs
+		if d.IsDir() {
+			base := d.Name()
+			if skipDirs[base] {
+				return filepath.SkipDir
+			}
+			if strings.HasPrefix(base, ".") {
+				return filepath.SkipDir
+			}
+		}
+
+		// Skip .gitignore matches
+		if matchesGitignore(patterns, relSlash) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		if d.IsDir() {
+			return nil // directories are implicit in tar
+		}
+
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+
+		hdr := &tar.Header{
+			Name:    relSlash,
+			Size:    info.Size(),
+			Mode:    int64(info.Mode()),
+			ModTime: info.ModTime(),
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+
+		f, err := os.Open(path)
+		if err != nil {
+			return nil
+		}
+		defer f.Close()
+		_, err = io.Copy(tw, f)
+		return err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("walking directory: %w", err)
+	}
+
+	if err := tw.Close(); err != nil {
+		return nil, fmt.Errorf("closing tar: %w", err)
+	}
+	if err := gw.Close(); err != nil {
+		return nil, fmt.Errorf("closing gzip: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+// uploadToS3 performs a raw PUT to a presigned S3 URL (no auth header).
+func uploadToS3(uploadURL string, data []byte) error {
+	req, err := http.NewRequest("PUT", uploadURL, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("creating S3 request: %w", err)
+	}
+	req.ContentLength = int64(len(data))
+	req.Header.Set("Content-Type", "application/x-tar")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("uploading to S3: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("S3 upload failed %d: %s", resp.StatusCode, body)
+	}
+	return nil
 }
 
 // ── link flow ────────────────────────────────────────────────────────────────
@@ -191,13 +369,13 @@ func createProjectInteractive(orgID string) (projectItem, error) {
 // ── deploy polling ───────────────────────────────────────────────────────────
 
 var statusEmoji = map[string]string{
-	"queued":     "⏳",
-	"building":   "🔨",
-	"deploying":  "🚀",
-	"running":    "✅",
-	"failed":     "❌",
-	"cancelled":  "🚫",
-	"success":    "✅",
+	"queued":    "⏳",
+	"building":  "🔨",
+	"deploying": "🚀",
+	"running":   "✅",
+	"failed":    "❌",
+	"cancelled": "🚫",
+	"success":   "✅",
 }
 
 func pollDeployment(orgID, projectID, deployID string) error {
@@ -268,6 +446,39 @@ var deployCmd = &cobra.Command{
 
 		if orgFlag != "" && projFlag != "" {
 			pc = &config.ProjectConfig{OrgID: orgFlag, ProjectID: projFlag}
+
+			// Fetch project name to populate config (best-effort)
+			var projListResp struct {
+				Data []projectItem `json:"data"`
+			}
+			if err := apiClient.Get(fmt.Sprintf("/api/v1/orgs/%s/projects", orgFlag), &projListResp); err == nil {
+				for _, p := range projListResp.Data {
+					if p.ID == projFlag {
+						pc.ProjectName = p.Name
+						break
+					}
+				}
+			}
+
+			// Fetch org name (best-effort)
+			var orgsResp struct {
+				Data []orgItem `json:"data"`
+			}
+			if err := apiClient.Get("/api/v1/orgs", &orgsResp); err == nil {
+				for _, o := range orgsResp.Data {
+					if o.ID == orgFlag {
+						pc.OrgName = o.Name
+						break
+					}
+				}
+			}
+
+			// Save .capsule.json so future runs don't need flags
+			if err := config.SaveProjectConfig(cwd, pc); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not save .capsule.json: %v\n", err)
+			} else {
+				fmt.Println("  ✓ Linked — .capsule.json created")
+			}
 		} else {
 			found, _, err := config.FindProjectConfig(cwd)
 			if err == nil {
@@ -300,8 +511,48 @@ var deployCmd = &cobra.Command{
 		fmt.Println()
 		fmt.Println()
 
-		// Trigger
-		body := map[string]string{"version": "cli", "git_sha": sha, "branch": branch}
+		// --- Upload flow ---
+		sourceKey := ""
+
+		type uploadURLResp struct {
+			UploadURL string `json:"upload_url"`
+			SourceKey string `json:"source_key"`
+		}
+		var uploadResp uploadURLResp
+		uploadErr := apiClient.Post(
+			fmt.Sprintf("/api/v1/orgs/%s/projects/%s/deployments/upload-url", pc.OrgID, pc.ProjectID),
+			map[string]string{},
+			&uploadResp,
+		)
+
+		if uploadErr == nil && uploadResp.UploadURL != "" {
+			fmt.Print("  Packaging source...")
+			archive, archErr := createSourceArchive(cwd)
+			if archErr != nil {
+				fmt.Printf(" failed (%v), skipping upload\n", archErr)
+			} else {
+				fmt.Printf(" %s\n", formatBytes(len(archive)))
+				fmt.Printf("  Uploading %s...\n", formatBytes(len(archive)))
+				if s3Err := uploadToS3(uploadResp.UploadURL, archive); s3Err != nil {
+					fmt.Fprintf(os.Stderr, "  Warning: upload failed (%v), deploying without source\n", s3Err)
+				} else {
+					sourceKey = uploadResp.SourceKey
+					fmt.Println("  ✓ Source uploaded")
+				}
+			}
+		} else if uploadErr != nil {
+			// Backend doesn't support upload yet — proceed without source
+			fmt.Println("  (source upload not supported by server, deploying via git SHA)")
+		}
+
+		// --- Trigger deployment ---
+		fmt.Println("  Triggering deployment...")
+		body := map[string]string{
+			"version":    "cli",
+			"git_sha":    sha,
+			"branch":     branch,
+			"source_key": sourceKey,
+		}
 		var resp deployment
 		if err := apiClient.Post(
 			fmt.Sprintf("/api/v1/orgs/%s/projects/%s/deployments", pc.OrgID, pc.ProjectID),
