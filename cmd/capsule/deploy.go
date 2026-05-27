@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -263,11 +264,213 @@ func uploadToS3(uploadURL string, data []byte) error {
 	return nil
 }
 
-// ── link flow ────────────────────────────────────────────────────────────────
+// ── project detection ────────────────────────────────────────────────────────
 
-func runLinkFlow(cwd string) (*config.ProjectConfig, error) {
-	fmt.Println("\nNo project linked to this directory.")
-	fmt.Println("Let's set one up.\n")
+// detectProjectSettings infers deploy settings from files present in dir.
+func detectProjectSettings(dir string) (*config.ProjectConfig, string) {
+	pc := &config.ProjectConfig{}
+	detectedLang := ""
+
+	// Dockerfile — highest priority for docker type
+	if _, err := os.Stat(filepath.Join(dir, "Dockerfile")); err == nil {
+		pc.DeployType = "docker"
+		pc.Port = 3000
+		// Try to read EXPOSE from Dockerfile
+		if data, err := os.ReadFile(filepath.Join(dir, "Dockerfile")); err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(strings.ToUpper(line), "EXPOSE ") {
+					parts := strings.Fields(line)
+					if len(parts) >= 2 {
+						if p, err := strconv.Atoi(parts[1]); err == nil {
+							pc.Port = p
+						}
+					}
+					break
+				}
+			}
+		}
+		detectedLang = "Docker"
+		return pc, detectedLang
+	}
+
+	// go.mod
+	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+		pc.DeployType = "docker"
+		pc.BuildCommand = "CGO_ENABLED=0 go build -o server ."
+		pc.StartCommand = "./server"
+		pc.Port = 3000
+		detectedLang = "Go"
+		return pc, detectedLang
+	}
+
+	// package.json
+	if data, err := os.ReadFile(filepath.Join(dir, "package.json")); err == nil {
+		var pkg struct {
+			Main    string            `json:"main"`
+			Scripts map[string]string `json:"scripts"`
+		}
+		_ = json.Unmarshal(data, &pkg)
+
+		hasBuild := pkg.Scripts["build"] != ""
+		hasStart := pkg.Scripts["start"] != ""
+		hasMain := pkg.Main != ""
+
+		if hasMain || hasStart {
+			pc.DeployType = "docker"
+			pc.BuildCommand = "npm install"
+			startCmd := "node index.js"
+			if pkg.Main != "" {
+				startCmd = "node " + pkg.Main
+			} else if pkg.Scripts["start"] != "" {
+				startCmd = pkg.Scripts["start"]
+			}
+			pc.StartCommand = startCmd
+			pc.Port = 3000
+			detectedLang = "Node.js"
+		} else if hasBuild {
+			pc.DeployType = "static"
+			pc.BuildCommand = pkg.Scripts["build"]
+			pc.OutputDir = "dist"
+			detectedLang = "Node.js (static)"
+		} else {
+			pc.DeployType = "docker"
+			pc.BuildCommand = "npm install"
+			pc.StartCommand = "node index.js"
+			pc.Port = 3000
+			detectedLang = "Node.js"
+		}
+		return pc, detectedLang
+	}
+
+	// requirements.txt
+	if _, err := os.Stat(filepath.Join(dir, "requirements.txt")); err == nil {
+		pc.DeployType = "docker"
+		pc.BuildCommand = "pip install -r requirements.txt"
+		pc.StartCommand = "python app.py"
+		pc.Port = 3000
+		detectedLang = "Python"
+		return pc, detectedLang
+	}
+
+	// index.html (no package.json)
+	if _, err := os.Stat(filepath.Join(dir, "index.html")); err == nil {
+		pc.DeployType = "static"
+		pc.OutputDir = "."
+		detectedLang = "Static HTML"
+		return pc, detectedLang
+	}
+
+	// Default fallback
+	pc.DeployType = "docker"
+	pc.Port = 3000
+	detectedLang = "Unknown"
+	return pc, detectedLang
+}
+
+// deployTypeLabel returns a human-readable deploy type label.
+func deployTypeLabel(dt string) string {
+	switch dt {
+	case "docker":
+		return "Docker (24/7 container)"
+	case "lambda":
+		return "Lambda (serverless)"
+	case "static":
+		return "Static (CDN/S3)"
+	default:
+		return dt
+	}
+}
+
+// askDeployType prompts user to pick a deploy type interactively.
+func askDeployType() string {
+	fmt.Println("? Deploy type:")
+	fmt.Println("  1. Docker   — 24/7 container, always running")
+	fmt.Println("  2. Lambda   — Serverless, runs on demand (AWS Lambda)")
+	fmt.Println("  3. Static   — Static files served from CDN (S3)")
+	choice := prompt("  Enter number", "1")
+	switch choice {
+	case "2":
+		return "lambda"
+	case "3":
+		return "static"
+	default:
+		return "docker"
+	}
+}
+
+// overrideSettings asks the user to override each detected setting.
+func overrideSettings(pc *config.ProjectConfig) {
+	dt := askDeployType()
+	pc.DeployType = dt
+
+	switch dt {
+	case "docker":
+		pc.BuildCommand = prompt("? Build command", pc.BuildCommand)
+		pc.StartCommand = prompt("? Start command", pc.StartCommand)
+		portStr := prompt("? Port", strconv.Itoa(pc.Port))
+		if p, err := strconv.Atoi(portStr); err == nil {
+			pc.Port = p
+		}
+	case "lambda":
+		pc.BuildCommand = prompt("? Build command", pc.BuildCommand)
+		pc.StartCommand = prompt("? Handler / start command", pc.StartCommand)
+	case "static":
+		pc.BuildCommand = prompt("? Build command", pc.BuildCommand)
+		pc.OutputDir = prompt("? Output directory", pc.OutputDir)
+	}
+}
+
+// printDetectedSettings prints a summary of auto-detected settings.
+func printDetectedSettings(lang string, pc *config.ProjectConfig) {
+	fmt.Printf("\nAuto-detected Project Settings (%s):\n", lang)
+	fmt.Printf("  - Deploy type: %s\n", deployTypeLabel(pc.DeployType))
+	if pc.BuildCommand != "" {
+		fmt.Printf("  - Build command: %s\n", pc.BuildCommand)
+	}
+	if pc.StartCommand != "" {
+		fmt.Printf("  - Start command: %s\n", pc.StartCommand)
+	}
+	if pc.Port > 0 && pc.DeployType == "docker" {
+		fmt.Printf("  - Port: %d\n", pc.Port)
+	}
+	if pc.OutputDir != "" {
+		fmt.Printf("  - Output dir: %s\n", pc.OutputDir)
+	}
+	fmt.Println()
+}
+
+// ── setup flow ───────────────────────────────────────────────────────────────
+
+func createProjectInteractive(orgID string) (projectItem, error) {
+	name := prompt("? Project name", "")
+	slug := strings.ToLower(strings.ReplaceAll(name, " ", "-"))
+	slug = prompt("? Project slug", slug)
+	runtime := prompt("? Runtime (node/go/python/rust)", "node")
+
+	body := map[string]string{"name": name, "slug": slug, "runtime": runtime}
+	var resp struct {
+		ID      string `json:"id"`
+		Name    string `json:"name"`
+		Slug    string `json:"slug"`
+		Runtime string `json:"runtime"`
+	}
+	if err := apiClient.Post(fmt.Sprintf("/api/v1/orgs/%s/projects", orgID), body, &resp); err != nil {
+		return projectItem{}, err
+	}
+	fmt.Printf("  ✓ Project created\n")
+	return projectItem{ID: resp.ID, Name: resp.Name, Slug: resp.Slug, Runtime: resp.Runtime}, nil
+}
+
+// runSetupFlow runs the full interactive setup (Vercel-style) and returns a ProjectConfig.
+func runSetupFlow(cwd string) (*config.ProjectConfig, error) {
+	// Get directory basename for display
+	dirName := filepath.Base(cwd)
+
+	if !confirm(fmt.Sprintf("? Set up and deploy %q?", dirName), true) {
+		return nil, fmt.Errorf("aborted")
+	}
+	fmt.Println()
 
 	// 1. List orgs
 	var orgsResp struct {
@@ -282,7 +485,7 @@ func runLinkFlow(cwd string) (*config.ProjectConfig, error) {
 
 	fmt.Println("? Which organization?")
 	for i, o := range orgsResp.Data {
-		fmt.Printf("  %d. %s (%s)\n", i+1, o.Name, o.Slug)
+		fmt.Printf("  %d. %s\n", i+1, o.Name)
 	}
 	orgChoice := prompt("  Enter number", "1")
 	idx, _ := strconv.Atoi(orgChoice)
@@ -307,9 +510,13 @@ func runLinkFlow(cwd string) (*config.ProjectConfig, error) {
 		if !confirm("? Create a new project?", true) {
 			return nil, fmt.Errorf("aborted")
 		}
-		proj, _ = createProjectInteractive(org.ID)
+		var createErr error
+		proj, createErr = createProjectInteractive(org.ID)
+		if createErr != nil {
+			return nil, createErr
+		}
 	} else {
-		fmt.Println("? Which project?")
+		fmt.Println("? Link to existing project?")
 		for i, p := range projResp.Data {
 			fmt.Printf("  %d. %s\n", i+1, p.Name)
 		}
@@ -317,7 +524,11 @@ func runLinkFlow(cwd string) (*config.ProjectConfig, error) {
 		choice := prompt("  Enter number", "1")
 		n, _ := strconv.Atoi(choice)
 		if n == len(projResp.Data)+1 {
-			proj, _ = createProjectInteractive(org.ID)
+			var createErr error
+			proj, createErr = createProjectInteractive(org.ID)
+			if createErr != nil {
+				return nil, createErr
+			}
 		} else {
 			if n < 1 || n > len(projResp.Data) {
 				n = 1
@@ -327,43 +538,37 @@ func runLinkFlow(cwd string) (*config.ProjectConfig, error) {
 	}
 	fmt.Printf("  ✓ %s\n\n", proj.Name)
 
+	// 3. Auto-detect project settings
+	detected, lang := detectProjectSettings(cwd)
+	printDetectedSettings(lang, detected)
+
+	if confirm("? Override these settings?", false) {
+		overrideSettings(detected)
+		fmt.Println()
+	}
+
 	pc := &config.ProjectConfig{
 		OrgID:       org.ID,
 		OrgName:     org.Name,
 		ProjectID:   proj.ID,
 		ProjectName: proj.Name,
+		DeployType:  detected.DeployType,
+		Port:        detected.Port,
+		BuildCommand: detected.BuildCommand,
+		StartCommand: detected.StartCommand,
+		OutputDir:   detected.OutputDir,
 	}
 
-	// 3. Save .capsule.json
-	if confirm("? Link this directory to "+proj.Name+"?", true) {
+	// 4. Save .capsule.json
+	if confirm("? Save settings to .capsule.json?", true) {
 		if err := config.SaveProjectConfig(cwd, pc); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not save .capsule.json: %v\n", err)
 		} else {
-			fmt.Println("  ✓ Linked — .capsule.json created\n")
+			fmt.Println("  ✓ Saved — .capsule.json created\n")
 		}
 	}
 
 	return pc, nil
-}
-
-func createProjectInteractive(orgID string) (projectItem, error) {
-	name := prompt("? Project name", "")
-	slug := strings.ToLower(strings.ReplaceAll(name, " ", "-"))
-	slug = prompt("? Project slug", slug)
-	runtime := prompt("? Runtime (node/go/python/rust)", "node")
-
-	body := map[string]string{"name": name, "slug": slug, "runtime": runtime}
-	var resp struct {
-		ID      string `json:"id"`
-		Name    string `json:"name"`
-		Slug    string `json:"slug"`
-		Runtime string `json:"runtime"`
-	}
-	if err := apiClient.Post(fmt.Sprintf("/api/v1/orgs/%s/projects", orgID), body, &resp); err != nil {
-		return projectItem{}, err
-	}
-	fmt.Printf("  ✓ Project created\n")
-	return projectItem{ID: resp.ID, Name: resp.Name, Slug: resp.Slug, Runtime: resp.Runtime}, nil
 }
 
 // ── deploy polling ───────────────────────────────────────────────────────────
@@ -420,8 +625,7 @@ func pollDeployment(orgID, projectID, deployID string) error {
 				fmt.Printf("  capsule deployments logs --org %s --project %s --id %s\n", orgID, projectID, deployID)
 				return fmt.Errorf("deployment failed")
 			}
-			fmt.Printf("\nDeployment complete in %s\n", elapsed)
-			fmt.Printf("ID: %s\n", deployID)
+			fmt.Printf("\n✅  %s  %s\n", d.Status, elapsed)
 			// Fetch project slug to construct the app URL
 			var projInfo struct {
 				Slug string `json:"slug"`
@@ -445,6 +649,12 @@ var deployCmd = &cobra.Command{
 	Long:  "Deploy the project linked to the current directory. Runs interactive setup if not yet linked.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cwd, _ := os.Getwd()
+
+		// Confirm deploy directory
+		if !confirm(fmt.Sprintf("? Deploy from %q?", cwd), true) {
+			return fmt.Errorf("aborted")
+		}
+		fmt.Println()
 
 		// Resolve project config
 		orgFlag, _ := cmd.Flags().GetString("org")
@@ -492,8 +702,8 @@ var deployCmd = &cobra.Command{
 			if err == nil {
 				pc = found
 			} else {
-				// Interactive link flow
-				pc, err = runLinkFlow(cwd)
+				// Interactive setup flow
+				pc, err = runSetupFlow(cwd)
 				if err != nil {
 					return err
 				}
@@ -581,7 +791,7 @@ var linkCmd = &cobra.Command{
 	Short: "Link current directory to a Capsule project",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cwd, _ := os.Getwd()
-		_, err := runLinkFlow(cwd)
+		_, err := runSetupFlow(cwd)
 		return err
 	},
 }

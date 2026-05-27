@@ -10,9 +10,21 @@ const projectConfigFile = ".capsule.json"
 
 type ProjectConfig struct {
 	OrgID       string `json:"org_id"`
+	OrgName     string `json:"org_name"`
 	ProjectID   string `json:"project_id"`
 	ProjectName string `json:"project_name"`
-	OrgName     string `json:"org_name"`
+
+	// Deploy settings
+	DeployType     string `json:"deploy_type,omitempty"`     // "docker" | "lambda" | "static"
+	Port           int    `json:"port,omitempty"`            // container port
+	BuildCommand   string `json:"build_command,omitempty"`
+	StartCommand   string `json:"start_command,omitempty"`
+	OutputDir      string `json:"output_dir,omitempty"`      // for static sites
+	InstallCommand string `json:"install_command,omitempty"`
+	NodeVersion    string `json:"node_version,omitempty"`
+	GoVersion      string `json:"go_version,omitempty"`
+	PythonVersion  string `json:"python_version,omitempty"`
+	EnvFile        string `json:"env_file,omitempty"`
 }
 
 // FindProjectConfig walks up from dir looking for .capsule.json
