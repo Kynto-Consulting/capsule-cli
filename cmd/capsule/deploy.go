@@ -264,6 +264,63 @@ func uploadToS3(uploadURL string, data []byte) error {
 	return nil
 }
 
+// injectFileIntoTar adds a single file entry to an existing tar.gz archive.
+func injectFileIntoTar(tarGz []byte, name string, content []byte) ([]byte, error) {
+	gr, err := gzip.NewReader(bytes.NewReader(tarGz))
+	if err != nil {
+		return nil, fmt.Errorf("decompressing archive: %w", err)
+	}
+	defer gr.Close()
+
+	rawData, err := io.ReadAll(gr)
+	if err != nil {
+		return nil, fmt.Errorf("reading archive: %w", err)
+	}
+	gr.Close()
+
+	tr := tar.NewReader(bytes.NewReader(rawData))
+	var out bytes.Buffer
+	gw := gzip.NewWriter(&out)
+	tw := tar.NewWriter(gw)
+
+	// Copy existing entries
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("reading tar entry: %w", err)
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return nil, fmt.Errorf("writing tar header: %w", err)
+		}
+		if _, err := io.Copy(tw, tr); err != nil {
+			return nil, fmt.Errorf("copying tar entry: %w", err)
+		}
+	}
+
+	// Append new file
+	if err := tw.WriteHeader(&tar.Header{
+		Name: name,
+		Size: int64(len(content)),
+		Mode: 0644,
+	}); err != nil {
+		return nil, fmt.Errorf("writing injected header: %w", err)
+	}
+	if _, err := tw.Write(content); err != nil {
+		return nil, fmt.Errorf("writing injected content: %w", err)
+	}
+
+	if err := tw.Close(); err != nil {
+		return nil, fmt.Errorf("closing tar writer: %w", err)
+	}
+	if err := gw.Close(); err != nil {
+		return nil, fmt.Errorf("closing gzip writer: %w", err)
+	}
+	return out.Bytes(), nil
+}
+
 // ── project detection ────────────────────────────────────────────────────────
 
 // detectProjectSettings infers deploy settings from files present in dir.
@@ -316,7 +373,25 @@ func detectProjectSettings(dir string) (*config.ProjectConfig, string) {
 		hasStart := pkg.Scripts["start"] != ""
 		hasMain := pkg.Main != ""
 
-		if hasMain || hasStart {
+		// Detect Next.js: next.config.* file present OR build script contains "next"
+		isNextJS := false
+		for _, cfgFile := range []string{"next.config.js", "next.config.ts", "next.config.mjs"} {
+			if _, err2 := os.Stat(filepath.Join(dir, cfgFile)); err2 == nil {
+				isNextJS = true
+				break
+			}
+		}
+		if !isNextJS && strings.Contains(pkg.Scripts["build"], "next") {
+			isNextJS = true
+		}
+
+		if isNextJS {
+			pc.DeployType = "docker"
+			pc.BuildCommand = "npm run build"
+			pc.StartCommand = "npm start"
+			pc.Port = 3000
+			detectedLang = "Next.js"
+		} else if hasMain || hasStart {
 			pc.DeployType = "docker"
 			pc.BuildCommand = "npm install"
 			startCmd := "node index.js"
@@ -643,12 +718,19 @@ func pollDeploymentWithTimeout(orgID, projectID, deployID string, timeout time.D
 			}
 			projPath := fmt.Sprintf("/api/v1/orgs/%s/projects/%s", orgID, projectID)
 			if err2 := apiClient.Get(projPath, &projInfo); err2 == nil && projInfo.Slug != "" {
-				appURL := fmt.Sprintf("https://%s.apps.tumi-ai.com", projInfo.Slug)
+				appsDomain := ""
+				if cfg != nil {
+					appsDomain = cfg.AppsDomain
+				}
+				if appsDomain == "" {
+					appsDomain = "apps.your-domain.com"
+				}
+				appURL := fmt.Sprintf("https://%s.%s", projInfo.Slug, appsDomain)
 				fmt.Println()
 				fmt.Printf("  🌐  %s\n", appURL)
 				fmt.Println()
 				fmt.Println("  Custom domain (optional):")
-				fmt.Printf("    1. Point your DNS:  CNAME  your-domain.com  →  %s.apps.tumi-ai.com\n", projInfo.Slug)
+				fmt.Printf("    1. Point your DNS:  CNAME  your-domain.com  →  %s.%s\n", projInfo.Slug, appsDomain)
 				fmt.Printf("    2. capsule domains add --org %s --project %s --domain your-domain.com\n", orgID, projectID)
 				fmt.Printf("    3. capsule domains verify --org %s --project %s --domain-id <id>\n", orgID, projectID)
 			}
@@ -769,6 +851,22 @@ var deployCmd = &cobra.Command{
 				fmt.Printf(" failed (%v), skipping upload\n", archErr)
 			} else {
 				fmt.Printf(" %s\n", formatBytes(len(archive)))
+
+				// Inject Dockerfile if not present
+				if _, statErr := os.Stat(filepath.Join(cwd, "Dockerfile")); os.IsNotExist(statErr) {
+					detected, lang := detectProjectSettings(cwd)
+					dockerfile := generateDockerfile(lang, detected)
+					if dockerfile != "" {
+						injected, injectErr := injectFileIntoTar(archive, "Dockerfile", []byte(dockerfile))
+						if injectErr != nil {
+							fmt.Fprintf(os.Stderr, "  Warning: could not inject Dockerfile: %v\n", injectErr)
+						} else {
+							archive = injected
+							fmt.Printf("  ✓ Auto-detected %s, generated Dockerfile\n", lang)
+						}
+					}
+				}
+
 				fmt.Printf("  Uploading %s...\n", formatBytes(len(archive)))
 				if s3Err := uploadToS3(uploadResp.UploadURL, archive); s3Err != nil {
 					fmt.Fprintf(os.Stderr, "  Warning: upload failed (%v), deploying without source\n", s3Err)

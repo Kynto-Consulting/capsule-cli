@@ -18,6 +18,7 @@ type Config struct {
 	Token        string `mapstructure:"token"`
 	RefreshToken string `mapstructure:"refresh_token"`
 	OrgID        string `mapstructure:"org_id"`
+	AppsDomain   string `mapstructure:"apps_domain"`
 }
 
 func Load() (*Config, error) {
@@ -52,6 +53,7 @@ func Save(cfg *Config) error {
 	viper.Set("token", cfg.Token)
 	viper.Set("refresh_token", cfg.RefreshToken)
 	viper.Set("org_id", cfg.OrgID)
+	viper.Set("apps_domain", cfg.AppsDomain)
 
 	return viper.WriteConfigAs(filepath.Join(dir, configFile))
 }
