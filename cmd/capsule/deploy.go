@@ -106,6 +106,12 @@ type deployment struct {
 
 // createSourceArchive tries git archive first, then falls back to manual walk.
 func createSourceArchive(dir string) ([]byte, error) {
+	// Normalize path separators: GOOS=js (WASM) uses Unix fs semantics and
+	// treats Windows backslash paths like "C:\Temp\app" as relative paths
+	// starting with "C:", producing empty archives. Forward slashes work on
+	// both Windows (Node.js fs) and Unix.
+	dir = strings.ReplaceAll(dir, "\\", "/")
+
 	cmd := exec.Command("git", "archive", "--format=tar.gz", "HEAD")
 	cmd.Dir = dir
 	out, err := cmd.Output()
@@ -164,6 +170,8 @@ var skipDirs = map[string]bool{
 }
 
 func createTarGzManual(dir string) ([]byte, error) {
+	// Ensure forward slashes for WASM/Node.js compatibility on Windows.
+	dir = strings.ReplaceAll(dir, "\\", "/")
 	patterns := loadGitignorePatterns(dir)
 
 	var buf bytes.Buffer
