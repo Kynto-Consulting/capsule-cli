@@ -1,0 +1,6 @@
+
+# npm package — generated/secret files
+npm/.npmrc
+npm/capsule.wasm
+npm/wasm_exec.js
+npm/wasm_exec_node.js
