@@ -30,6 +30,8 @@ var storageCreateCmd = &cobra.Command{
 			return fmt.Errorf("--org, --project, and --name are required")
 		}
 
+		yes, _ := cmd.Flags().GetBool("yes")
+
 		// Show cost preview before confirming
 		fmt.Println("┌─ Cost Estimate ──────────────────────────────┐")
 		fmt.Println("│ Amazon S3 Standard Bucket                    │")
@@ -41,12 +43,14 @@ var storageCreateCmd = &cobra.Command{
 		fmt.Println("│  Estimated:    ~$1.12/month                  │")
 		fmt.Println("│  Annual:       ~$13.44/year                  │")
 		fmt.Println("└──────────────────────────────────────────────┘")
-		fmt.Print("Proceed with provisioning S3 bucket? (y/N): ")
-		var confirm string
-		fmt.Scanln(&confirm)
-		if strings.ToLower(confirm) != "y" && strings.ToLower(confirm) != "yes" {
-			fmt.Println("Provisioning cancelled.")
-			return nil
+		if !yes {
+			fmt.Print("Proceed with provisioning S3 bucket? (y/N): ")
+			var ans string
+			fmt.Scanln(&ans)
+			if strings.ToLower(ans) != "y" && strings.ToLower(ans) != "yes" {
+				fmt.Println("Provisioning cancelled.")
+				return nil
+			}
 		}
 
 		public, _ := cmd.Flags().GetBool("public")
@@ -185,6 +189,7 @@ func init() {
 	storageCreateCmd.Flags().String("project", "", "Project ID")
 	storageCreateCmd.Flags().String("name", "", "Bucket reference name")
 	storageCreateCmd.Flags().Bool("public", false, "Allow public read access (for hosting public assets)")
+	storageCreateCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 
 	storageListCmd.Flags().String("org", "", "Org ID")
 	storageListCmd.Flags().String("project", "", "Project ID")

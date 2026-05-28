@@ -119,6 +119,26 @@ var aiOptimizeCostsCmd = &cobra.Command{
 	},
 }
 
+var aiExplainFailureCmd = &cobra.Command{
+	Use:   "explain-failure",
+	Short: "Explain why a deployment failed using AI",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		deploymentID, _ := cmd.Flags().GetString("deployment")
+		if deploymentID == "" {
+			return fmt.Errorf("--deployment is required")
+		}
+
+		body := map[string]string{"deployment_id": deploymentID}
+		var resp map[string]string
+		if err := apiClient.Post("/api/v1/ai/explain-failure", body, &resp); err != nil {
+			return err
+		}
+
+		fmt.Println(resp["explanation"])
+		return nil
+	},
+}
+
 var aiKeysCmd = &cobra.Command{
 	Use:   "keys",
 	Short: "Manage Bedrock proxy API keys",
@@ -194,9 +214,10 @@ var aiKeysRevokeCmd = &cobra.Command{
 func init() {
 	aiDockerfileCmd.Flags().String("runtime", "", "Runtime to generate Dockerfile for (go, node, python, rust)")
 	aiOptimizeCostsCmd.Flags().String("project", "", "Project ID")
+	aiExplainFailureCmd.Flags().String("deployment", "", "Deployment ID to analyse")
 	aiKeysCreateCmd.Flags().String("name", "Default Key", "Descriptive key name")
 
 	aiKeysCmd.AddCommand(aiKeysCreateCmd, aiKeysListCmd, aiKeysRevokeCmd)
-	aiCmd.AddCommand(aiDockerfileCmd, aiOptimizeCostsCmd, aiKeysCmd)
+	aiCmd.AddCommand(aiDockerfileCmd, aiOptimizeCostsCmd, aiExplainFailureCmd, aiKeysCmd)
 	rootCmd.AddCommand(aiCmd)
 }
