@@ -1,6 +1,6 @@
 {
   "name": "@kyntocg/capsule-cli",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Capsule CLI — deploy and manage your AWS infrastructure from the terminal",
   "keywords": [
     "capsule",
