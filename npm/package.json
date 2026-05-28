@@ -1,5 +1,5 @@
 {
-  "name": "capsule-cli",
+  "name": "@arubiku/capsule-cli",
   "version": "0.1.0",
   "description": "Capsule CLI — deploy and manage your AWS infrastructure from the terminal",
   "keywords": ["capsule", "aws", "deploy", "paas", "cli"],
