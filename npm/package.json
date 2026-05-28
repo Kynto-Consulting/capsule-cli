@@ -1,17 +1,25 @@
 {
   "name": "@kyntocg/capsule-cli",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Capsule CLI — deploy and manage your AWS infrastructure from the terminal",
-  "keywords": ["capsule", "aws", "deploy", "paas", "cli"],
+  "keywords": [
+    "capsule",
+    "aws",
+    "deploy",
+    "paas",
+    "cli"
+  ],
   "license": "MIT",
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "bin": {
     "capsule": "./bin/capsule.js"
   },
   "files": [
     "bin/",
     "capsule.wasm",
-    "wasm_exec_node.js"
+    "wasm_exec.js"
   ],
   "repository": {
     "type": "git",

@@ -77,10 +77,8 @@ func refreshTokenIfNeeded(apiURL string) {
 		RefreshToken string `json:"refresh_token"`
 	}
 	type refreshResp struct {
-		Tokens struct {
-			AccessToken  string `json:"access_token"`
-			RefreshToken string `json:"refresh_token"`
-		} `json:"tokens"`
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
 	}
 
 	b, err := json.Marshal(refreshReq{RefreshToken: cfg.RefreshToken})
@@ -109,13 +107,13 @@ func refreshTokenIfNeeded(apiURL string) {
 		return
 	}
 
-	if rr.Tokens.AccessToken == "" {
+	if rr.AccessToken == "" {
 		return
 	}
 
-	cfg.Token = rr.Tokens.AccessToken
-	if rr.Tokens.RefreshToken != "" {
-		cfg.RefreshToken = rr.Tokens.RefreshToken
+	cfg.Token = rr.AccessToken
+	if rr.RefreshToken != "" {
+		cfg.RefreshToken = rr.RefreshToken
 	}
 	_ = config.Save(cfg)
 }

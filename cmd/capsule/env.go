@@ -90,41 +90,43 @@ var envListCmd = &cobra.Command{
 // ── env set ───────────────────────────────────────────────────────────────────
 
 var envSetCmd = &cobra.Command{
-	Use:   "set KEY=VALUE",
-	Short: "Create or update an environment variable",
-	Args:  cobra.ExactArgs(1),
+	Use:   "set KEY=VALUE [KEY2=VALUE2 ...]",
+	Short: "Create or update one or more environment variables",
+	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		orgID, projectID, err := resolveOrgProject(cmd)
 		if err != nil {
 			return err
 		}
 
-		parts := strings.SplitN(args[0], "=", 2)
-		if len(parts) != 2 {
-			return fmt.Errorf("argument must be in KEY=VALUE format")
-		}
-		key := strings.TrimSpace(parts[0])
-		value := parts[1]
-		if key == "" {
-			return fmt.Errorf("key must not be empty")
-		}
-
 		isSecret, _ := cmd.Flags().GetBool("secret")
 		scope, _ := cmd.Flags().GetString("scope")
 
-		body := map[string]interface{}{
-			"key":       key,
-			"value":     value,
-			"is_secret": isSecret,
-			"scope":     scope,
-		}
+		for _, arg := range args {
+			parts := strings.SplitN(arg, "=", 2)
+			if len(parts) != 2 {
+				return fmt.Errorf("argument %q must be in KEY=VALUE format", arg)
+			}
+			key := strings.TrimSpace(parts[0])
+			value := parts[1]
+			if key == "" {
+				return fmt.Errorf("key must not be empty in %q", arg)
+			}
 
-		var result envVarItem
-		if err := apiClient.Put(envPath(orgID, projectID), body, &result); err != nil {
-			return fmt.Errorf("setting env var: %w", err)
-		}
+			body := map[string]interface{}{
+				"key":       key,
+				"value":     value,
+				"is_secret": isSecret,
+				"scope":     scope,
+			}
 
-		fmt.Printf("Set %s (%s)\n", result.Key, result.Scope)
+			var result envVarItem
+			if err := apiClient.Put(envPath(orgID, projectID), body, &result); err != nil {
+				return fmt.Errorf("setting %s: %w", key, err)
+			}
+
+			fmt.Printf("Set %s (%s)\n", result.Key, result.Scope)
+		}
 		return nil
 	},
 }
