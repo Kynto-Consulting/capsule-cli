@@ -105,10 +105,18 @@ type deployment struct {
 // ── source archive ───────────────────────────────────────────────────────────
 
 // createSourceArchive tries git archive first, then falls back to manual walk.
+// On Windows with Go WASM, os.ReadDir fails (O_DIRECTORY not supported), so
+// bin/capsule.js pre-creates the archive and passes it via CAPSULE_SOURCE_ARCHIVE.
 func createSourceArchive(dir string) ([]byte, error) {
+	// Use pre-created archive from Node.js wrapper (Windows WASM workaround)
+	if archivePath := os.Getenv("CAPSULE_SOURCE_ARCHIVE"); archivePath != "" {
+		data, err := os.ReadFile(archivePath)
+		if err == nil && len(data) > 0 {
+			return data, nil
+		}
+	}
+
 	// CAPSULE_CWD is injected by bin/capsule.js with Node.js process.cwd()
-	// which returns the correct platform path even when os.Getwd() returns
-	// a MSYS-style path inside the Go WASM runtime on Windows.
 	if envDir := os.Getenv("CAPSULE_CWD"); envDir != "" {
 		dir = envDir
 	}
@@ -187,11 +195,13 @@ func createTarGzManual(dir string) ([]byte, error) {
 	// Go WASM (GOOS=js) on Windows. filepath.WalkDir uses filepath.Glob
 	// internally which can misbehave with drive-letter paths in the WASM
 	// runtime; os.ReadDir → os.Open is lower-level and works correctly.
+	var fileCount int
 	var walkDir func(absDir, relPrefix string) error
 	walkDir = func(absDir, relPrefix string) error {
 		entries, err := os.ReadDir(absDir)
 		if err != nil {
-			return nil // skip unreadable dirs silently
+			fmt.Fprintf(os.Stderr, "  [warn] cannot read dir %s: %v\n", absDir, err)
+			return nil
 		}
 		for _, entry := range entries {
 			name := entry.Name()
@@ -222,6 +232,7 @@ func createTarGzManual(dir string) ([]byte, error) {
 			}
 
 			// Write file into tar
+			fileCount++
 			absPath := absDir + "/" + name
 			info, err := entry.Info()
 			if err != nil {
@@ -251,6 +262,10 @@ func createTarGzManual(dir string) ([]byte, error) {
 
 	if err := walkDir(dir, ""); err != nil {
 		return nil, fmt.Errorf("walking directory: %w", err)
+	}
+	if fileCount == 0 {
+		fmt.Fprintf(os.Stderr, "  [warn] no files found in %s (CAPSULE_CWD=%s)\n",
+			dir, os.Getenv("CAPSULE_CWD"))
 	}
 
 	if err := tw.Close(); err != nil {
