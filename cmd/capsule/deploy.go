@@ -123,7 +123,9 @@ func createSourceArchive(dir string) ([]byte, error) {
 
 // loadGitignorePatterns reads .gitignore in dir and returns non-comment patterns.
 func loadGitignorePatterns(dir string) []string {
-	f, err := os.Open(filepath.Join(dir, ".gitignore"))
+	// Use string concat instead of filepath.Join to preserve forward slashes
+	// in WASM/Windows environments where filepath.Join returns backslashes.
+	f, err := os.Open(dir + "/.gitignore")
 	if err != nil {
 		return nil
 	}
@@ -155,7 +157,7 @@ func matchesGitignore(patterns []string, relPath string) bool {
 		}
 		// Prefix directory match (e.g. "dist/")
 		trimmed := strings.TrimSuffix(pat, "/")
-		if strings.HasPrefix(relPath, trimmed+string(filepath.Separator)) || relPath == trimmed {
+		if strings.HasPrefix(relPath, trimmed+"/") || relPath == trimmed {
 			return true
 		}
 	}
@@ -178,66 +180,73 @@ func createTarGzManual(dir string) ([]byte, error) {
 	gw := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gw)
 
-	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+	// walkDir is a recursive os.ReadDir-based walker that works reliably in
+	// Go WASM (GOOS=js) on Windows. filepath.WalkDir uses filepath.Glob
+	// internally which can misbehave with drive-letter paths in the WASM
+	// runtime; os.ReadDir → os.Open is lower-level and works correctly.
+	var walkDir func(absDir, relPrefix string) error
+	walkDir = func(absDir, relPrefix string) error {
+		entries, err := os.ReadDir(absDir)
 		if err != nil {
-			return nil // skip unreadable entries
+			return nil // skip unreadable dirs silently
 		}
+		for _, entry := range entries {
+			name := entry.Name()
 
-		rel, err := filepath.Rel(dir, path)
-		if err != nil || rel == "." {
-			return nil
-		}
-
-		// Normalise to forward slashes for matching
-		relSlash := filepath.ToSlash(rel)
-
-		// Skip hidden/vendor dirs
-		if d.IsDir() {
-			base := d.Name()
-			if skipDirs[base] {
-				return filepath.SkipDir
+			// Build relative path (always forward slashes)
+			relSlash := name
+			if relPrefix != "" {
+				relSlash = relPrefix + "/" + name
 			}
-			if strings.HasPrefix(base, ".") {
-				return filepath.SkipDir
+
+			// Skip hidden dirs and known vendor dirs
+			if entry.IsDir() {
+				if skipDirs[name] || strings.HasPrefix(name, ".") {
+					continue
+				}
+				if matchesGitignore(patterns, relSlash) {
+					continue
+				}
+				if err2 := walkDir(absDir+"/"+name, relSlash); err2 != nil {
+					return err2
+				}
+				continue
+			}
+
+			// Skip files matching .gitignore
+			if matchesGitignore(patterns, relSlash) {
+				continue
+			}
+
+			// Write file into tar
+			absPath := absDir + "/" + name
+			info, err := entry.Info()
+			if err != nil {
+				continue
+			}
+			hdr := &tar.Header{
+				Name:    relSlash,
+				Size:    info.Size(),
+				Mode:    int64(info.Mode()),
+				ModTime: info.ModTime(),
+			}
+			if err := tw.WriteHeader(hdr); err != nil {
+				return err
+			}
+			f, err := os.Open(absPath)
+			if err != nil {
+				continue
+			}
+			_, copyErr := io.Copy(tw, f)
+			f.Close()
+			if copyErr != nil {
+				return copyErr
 			}
 		}
+		return nil
+	}
 
-		// Skip .gitignore matches
-		if matchesGitignore(patterns, relSlash) {
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		if d.IsDir() {
-			return nil // directories are implicit in tar
-		}
-
-		info, err := d.Info()
-		if err != nil {
-			return nil
-		}
-
-		hdr := &tar.Header{
-			Name:    relSlash,
-			Size:    info.Size(),
-			Mode:    int64(info.Mode()),
-			ModTime: info.ModTime(),
-		}
-		if err := tw.WriteHeader(hdr); err != nil {
-			return err
-		}
-
-		f, err := os.Open(path)
-		if err != nil {
-			return nil
-		}
-		defer f.Close()
-		_, err = io.Copy(tw, f)
-		return err
-	})
-	if err != nil {
+	if err := walkDir(dir, ""); err != nil {
 		return nil, fmt.Errorf("walking directory: %w", err)
 	}
 
@@ -337,11 +346,11 @@ func detectProjectSettings(dir string) (*config.ProjectConfig, string) {
 	detectedLang := ""
 
 	// Dockerfile — highest priority for docker type
-	if _, err := os.Stat(filepath.Join(dir, "Dockerfile")); err == nil {
+	if _, err := os.Stat(dir + "/Dockerfile"); err == nil {
 		pc.DeployType = "docker"
 		pc.Port = 3000
 		// Try to read EXPOSE from Dockerfile
-		if data, err := os.ReadFile(filepath.Join(dir, "Dockerfile")); err == nil {
+		if data, err := os.ReadFile(dir + "/Dockerfile"); err == nil {
 			for _, line := range strings.Split(string(data), "\n") {
 				line = strings.TrimSpace(line)
 				if strings.HasPrefix(strings.ToUpper(line), "EXPOSE ") {
@@ -360,7 +369,7 @@ func detectProjectSettings(dir string) (*config.ProjectConfig, string) {
 	}
 
 	// go.mod
-	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+	if _, err := os.Stat(dir + "/go.mod"); err == nil {
 		pc.DeployType = "docker"
 		pc.BuildCommand = "CGO_ENABLED=0 go build -o server ."
 		pc.StartCommand = "./server"
@@ -370,7 +379,7 @@ func detectProjectSettings(dir string) (*config.ProjectConfig, string) {
 	}
 
 	// package.json
-	if data, err := os.ReadFile(filepath.Join(dir, "package.json")); err == nil {
+	if data, err := os.ReadFile(dir + "/package.json"); err == nil {
 		var pkg struct {
 			Main    string            `json:"main"`
 			Scripts map[string]string `json:"scripts"`
@@ -384,7 +393,7 @@ func detectProjectSettings(dir string) (*config.ProjectConfig, string) {
 		// Detect Next.js: next.config.* file present OR build script contains "next"
 		isNextJS := false
 		for _, cfgFile := range []string{"next.config.js", "next.config.ts", "next.config.mjs"} {
-			if _, err2 := os.Stat(filepath.Join(dir, cfgFile)); err2 == nil {
+			if _, err2 := os.Stat(dir + "/" + cfgFile); err2 == nil {
 				isNextJS = true
 				break
 			}
@@ -427,7 +436,7 @@ func detectProjectSettings(dir string) (*config.ProjectConfig, string) {
 	}
 
 	// requirements.txt
-	if _, err := os.Stat(filepath.Join(dir, "requirements.txt")); err == nil {
+	if _, err := os.Stat(dir + "/requirements.txt"); err == nil {
 		pc.DeployType = "docker"
 		pc.BuildCommand = "pip install -r requirements.txt"
 		pc.StartCommand = "python app.py"
@@ -437,7 +446,7 @@ func detectProjectSettings(dir string) (*config.ProjectConfig, string) {
 	}
 
 	// index.html (no package.json)
-	if _, err := os.Stat(filepath.Join(dir, "index.html")); err == nil {
+	if _, err := os.Stat(dir + "/index.html"); err == nil {
 		pc.DeployType = "static"
 		pc.OutputDir = "."
 		detectedLang = "Static HTML"
