@@ -32,7 +32,10 @@ require(path.join(root, 'wasm_exec.js'))
 async function main() {
   const go    = new globalThis.Go()
   go.argv     = ['capsule', ...process.argv.slice(2)]
-  go.env      = Object.assign({ TMPDIR: os.tmpdir() }, process.env)
+  // Inject cwd explicitly so Go WASM can read it without relying on
+  // os.Getwd() which may return MSYS-style paths incompatible with the
+  // WASM fs bridge on Windows.
+  go.env      = Object.assign({ TMPDIR: os.tmpdir(), CAPSULE_CWD: process.cwd() }, process.env)
   go.exit     = process.exit
 
   const buf    = fs.readFileSync(wasmPath)

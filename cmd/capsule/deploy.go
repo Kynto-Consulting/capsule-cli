@@ -106,10 +106,13 @@ type deployment struct {
 
 // createSourceArchive tries git archive first, then falls back to manual walk.
 func createSourceArchive(dir string) ([]byte, error) {
-	// Normalize path separators: GOOS=js (WASM) uses Unix fs semantics and
-	// treats Windows backslash paths like "C:\Temp\app" as relative paths
-	// starting with "C:", producing empty archives. Forward slashes work on
-	// both Windows (Node.js fs) and Unix.
+	// CAPSULE_CWD is injected by bin/capsule.js with Node.js process.cwd()
+	// which returns the correct platform path even when os.Getwd() returns
+	// a MSYS-style path inside the Go WASM runtime on Windows.
+	if envDir := os.Getenv("CAPSULE_CWD"); envDir != "" {
+		dir = envDir
+	}
+	// Normalize to forward slashes for WASM/Node.js fs compatibility.
 	dir = strings.ReplaceAll(dir, "\\", "/")
 
 	cmd := exec.Command("git", "archive", "--format=tar.gz", "HEAD")
@@ -766,6 +769,11 @@ var deployCmd = &cobra.Command{
 	Long:  "Deploy the project linked to the current directory. Runs interactive setup if not yet linked.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cwd, _ := os.Getwd()
+		// Prefer CAPSULE_CWD injected by the Node.js wrapper (bin/capsule.js)
+		// which always provides the correct platform path on Windows.
+		if envDir := os.Getenv("CAPSULE_CWD"); envDir != "" {
+			cwd = envDir
+		}
 		yes, _ := cmd.Flags().GetBool("yes")
 
 		// Confirm deploy directory
