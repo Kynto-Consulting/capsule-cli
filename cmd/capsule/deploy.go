@@ -358,6 +358,122 @@ func injectFileIntoTar(tarGz []byte, name string, content []byte) ([]byte, error
 
 // ── project detection ────────────────────────────────────────────────────────
 
+// detectPort scans common project files for an explicit port number.
+// Priority: .env / .env.example PORT=, then source file listen() calls.
+// Returns 0 if not found.
+func detectPort(dir string) int {
+	// 1. .env / .env.example: look for PORT=XXXX
+	for _, envFile := range []string{".env", ".env.example", ".env.local"} {
+		data, err := os.ReadFile(dir + "/" + envFile)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "#") {
+				continue
+			}
+			if strings.HasPrefix(strings.ToUpper(line), "PORT=") {
+				parts := strings.SplitN(line, "=", 2)
+				if len(parts) == 2 {
+					if p, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil && p > 0 {
+						return p
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Entry-point source files: look for .listen(PORT) or .listen(XXXX)
+	candidates := []string{
+		"index.ts", "index.js", "index.mjs",
+		"server.ts", "server.js",
+		"app.ts", "app.js",
+		"main.ts", "main.js", "main.py",
+		"src/index.ts", "src/index.js",
+		"src/server.ts", "src/server.js",
+		"src/app.ts", "src/app.js",
+		"src/main.ts", "src/main.js",
+	}
+	portRe := strings.NewReplacer() // unused, just for structure
+	_ = portRe
+	for _, f := range candidates {
+		data, err := os.ReadFile(dir + "/" + f)
+		if err != nil {
+			continue
+		}
+		content := string(data)
+		// Match patterns: .listen(3000), .listen(PORT, .listen(process.env.PORT || 3000)
+		for _, line := range strings.Split(content, "\n") {
+			// Quick scan: find .listen( then grab digits
+			idx := strings.Index(line, ".listen(")
+			if idx == -1 {
+				continue
+			}
+			rest := line[idx+8:]
+			// skip whitespace
+			rest = strings.TrimLeft(rest, " \t")
+			// if starts with digit, parse port
+			if len(rest) > 0 && rest[0] >= '0' && rest[0] <= '9' {
+				numStr := ""
+				for _, ch := range rest {
+					if ch >= '0' && ch <= '9' {
+						numStr += string(ch)
+					} else {
+						break
+					}
+				}
+				if p, err := strconv.Atoi(numStr); err == nil && p > 1024 && p < 65536 {
+					return p
+				}
+			}
+			// pattern: || 3000) or || 8080)
+			for _, pat := range []string{"|| ", "||"} {
+				or := strings.Index(rest, pat)
+				if or == -1 {
+					continue
+				}
+				after := strings.TrimLeft(rest[or+len(pat):], " \t")
+				numStr := ""
+				for _, ch := range after {
+					if ch >= '0' && ch <= '9' {
+						numStr += string(ch)
+					} else {
+						break
+					}
+				}
+				if p, err := strconv.Atoi(numStr); err == nil && p > 1024 && p < 65536 {
+					return p
+				}
+			}
+		}
+	}
+
+	// 3. Python / Django / FastAPI: check manage.py presence or common patterns
+	if _, err := os.Stat(dir + "/manage.py"); err == nil {
+		return 8000 // Django default
+	}
+	if data, err := os.ReadFile(dir + "/requirements.txt"); err == nil {
+		content := strings.ToLower(string(data))
+		if strings.Contains(content, "fastapi") || strings.Contains(content, "uvicorn") {
+			return 8000
+		}
+		if strings.Contains(content, "flask") {
+			return 5000
+		}
+	}
+
+	return 0
+}
+
+// resolvePort returns the detected port, falling back to defaultPort.
+func resolvePort(dir string, defaultPort int) int {
+	if p := detectPort(dir); p > 0 {
+		return p
+	}
+	return defaultPort
+}
+
 // detectProjectSettings infers deploy settings from files present in dir.
 func detectProjectSettings(dir string) (*config.ProjectConfig, string) {
 	pc := &config.ProjectConfig{}
@@ -366,8 +482,8 @@ func detectProjectSettings(dir string) (*config.ProjectConfig, string) {
 	// Dockerfile — highest priority for docker type
 	if _, err := os.Stat(dir + "/Dockerfile"); err == nil {
 		pc.DeployType = "docker"
-		pc.Port = 3000
-		// Try to read EXPOSE from Dockerfile
+		pc.Port = resolvePort(dir, 3000)
+		// Try to read EXPOSE from Dockerfile (overrides detectPort)
 		if data, err := os.ReadFile(dir + "/Dockerfile"); err == nil {
 			for _, line := range strings.Split(string(data), "\n") {
 				line = strings.TrimSpace(line)
@@ -391,7 +507,7 @@ func detectProjectSettings(dir string) (*config.ProjectConfig, string) {
 		pc.DeployType = "docker"
 		pc.BuildCommand = "CGO_ENABLED=0 go build -o server ."
 		pc.StartCommand = "./server"
-		pc.Port = 3000
+		pc.Port = resolvePort(dir, 8080) // Go services usually use 8080
 		detectedLang = "Go"
 		return pc, detectedLang
 	}
@@ -424,7 +540,7 @@ func detectProjectSettings(dir string) (*config.ProjectConfig, string) {
 			pc.DeployType = "docker"
 			pc.BuildCommand = "npm run build"
 			pc.StartCommand = "npm start"
-			pc.Port = 3000
+			pc.Port = resolvePort(dir, 3000) // Next.js default 3000
 			detectedLang = "Next.js"
 		} else if hasMain || hasStart {
 			pc.DeployType = "docker"
@@ -436,7 +552,7 @@ func detectProjectSettings(dir string) (*config.ProjectConfig, string) {
 				startCmd = pkg.Scripts["start"]
 			}
 			pc.StartCommand = startCmd
-			pc.Port = 3000
+			pc.Port = resolvePort(dir, 3000)
 			detectedLang = "Node.js"
 		} else if hasBuild {
 			pc.DeployType = "static"
@@ -447,7 +563,7 @@ func detectProjectSettings(dir string) (*config.ProjectConfig, string) {
 			pc.DeployType = "docker"
 			pc.BuildCommand = "npm install"
 			pc.StartCommand = "node index.js"
-			pc.Port = 3000
+			pc.Port = resolvePort(dir, 3000)
 			detectedLang = "Node.js"
 		}
 		return pc, detectedLang
@@ -458,7 +574,7 @@ func detectProjectSettings(dir string) (*config.ProjectConfig, string) {
 		pc.DeployType = "docker"
 		pc.BuildCommand = "pip install -r requirements.txt"
 		pc.StartCommand = "python app.py"
-		pc.Port = 3000
+		pc.Port = resolvePort(dir, 8000) // Python/Django/FastAPI default 8000
 		detectedLang = "Python"
 		return pc, detectedLang
 	}
