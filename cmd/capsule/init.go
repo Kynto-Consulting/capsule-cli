@@ -25,6 +25,28 @@ capsule logs runtime     # tail runtime logs
 capsule logs build       # tail build logs
 ` + "```" + `
 
+## Persistent storage
+
+Every deployment automatically gets a named Docker volume mounted at **` + "`/data`" + `** inside the container.
+The volume survives redeploys — data is never lost when you push a new version.
+
+Use ` + "`/data`" + ` for anything that must persist: SQLite databases, uploaded files, caches, etc.
+
+` + "```" + `js
+// Example: SQLite in Node.js
+const db = new Database('/data/app.db')
+` + "```" + `
+
+` + "```" + `python
+# Example: SQLite in Python
+conn = sqlite3.connect('/data/app.db')
+` + "```" + `
+
+` + "```" + `go
+// Example: file storage in Go
+os.MkdirAll("/data/uploads", 0755)
+` + "```" + `
+
 ## Environment variables
 
 ` + "```" + `bash

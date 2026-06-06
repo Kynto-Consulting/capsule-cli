@@ -39,6 +39,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o server .
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=builder /app/server /server
 EXPOSE 8080
+# /data is a persistent volume — survives redeploys. Use it for SQLite, uploads, etc.
+VOLUME ["/data"]
 ENTRYPOINT ["/server"]
 `
 }
@@ -64,6 +66,8 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 EXPOSE 3000
+# /data is a persistent volume — survives redeploys. Use it for SQLite, uploads, etc.
+VOLUME ["/data"]
 CMD %s
 `, cmd)
 }
@@ -88,6 +92,8 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
 EXPOSE 3000
+# /data is a persistent volume — survives redeploys. Use it for SQLite, uploads, etc.
+VOLUME ["/data"]
 CMD ["npm", "start"]
 `
 }
@@ -112,6 +118,8 @@ WORKDIR /app
 COPY --from=builder /install /usr/local
 COPY . .
 EXPOSE 8000
+# /data is a persistent volume — survives redeploys. Use it for SQLite, uploads, etc.
+VOLUME ["/data"]
 CMD %s
 `, cmd)
 }
@@ -123,6 +131,8 @@ COPY Gemfile Gemfile.lock ./
 RUN bundle install --without development test
 COPY . .
 EXPOSE 3000
+# /data is a persistent volume — survives redeploys. Use it for SQLite, uploads, etc.
+VOLUME ["/data"]
 CMD ["ruby", "app.rb"]
 `
 }
@@ -139,6 +149,8 @@ FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 COPY --from=build /app/target/*.jar app.jar
 EXPOSE 8080
+# /data is a persistent volume — survives redeploys. Use it for SQLite, uploads, etc.
+VOLUME ["/data"]
 ENTRYPOINT ["java", "-jar", "app.jar"]
 `
 }
