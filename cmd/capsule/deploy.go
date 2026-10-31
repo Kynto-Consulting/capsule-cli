@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -54,6 +55,10 @@ func confirm(label string, defaultYes bool) bool {
 }
 
 func gitSHA() string {
+	// os/exec is unavailable under WASM; the Node wrapper passes these in.
+	if v := os.Getenv("CAPSULE_GIT_SHA"); v != "" {
+		return v
+	}
 	out, err := exec.Command("git", "rev-parse", "--short", "HEAD").Output()
 	if err != nil {
 		return ""
@@ -62,6 +67,9 @@ func gitSHA() string {
 }
 
 func gitBranch() string {
+	if v := os.Getenv("CAPSULE_GIT_BRANCH"); v != "" {
+		return v
+	}
 	out, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
 	if err != nil {
 		return ""
@@ -774,15 +782,15 @@ func runSetupFlow(cwd string) (*config.ProjectConfig, error) {
 	}
 
 	pc := &config.ProjectConfig{
-		OrgID:       org.ID,
-		OrgName:     org.Name,
-		ProjectID:   proj.ID,
-		ProjectName: proj.Name,
-		DeployType:  detected.DeployType,
-		Port:        detected.Port,
+		OrgID:        org.ID,
+		OrgName:      org.Name,
+		ProjectID:    proj.ID,
+		ProjectName:  proj.Name,
+		DeployType:   detected.DeployType,
+		Port:         detected.Port,
 		BuildCommand: detected.BuildCommand,
 		StartCommand: detected.StartCommand,
-		OutputDir:   detected.OutputDir,
+		OutputDir:    detected.OutputDir,
 	}
 
 	// 4. Save .capsule.json
@@ -790,7 +798,7 @@ func runSetupFlow(cwd string) (*config.ProjectConfig, error) {
 		if err := config.SaveProjectConfig(cwd, pc); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not save .capsule.json: %v\n", err)
 		} else {
-			fmt.Println("  ✓ Saved — .capsule.json created\n")
+			fmt.Print("  ✓ Saved — .capsule.json created\n\n")
 		}
 	}
 
@@ -813,11 +821,16 @@ func pollDeployment(orgID, projectID, deployID string) error {
 	return pollDeploymentWithTimeout(orgID, projectID, deployID, 10*time.Minute)
 }
 
+// lastDeployURL is the public URL of the most recent successful deployment
+// (empty when it could not be determined).
+var lastDeployURL string
+
 func pollDeploymentWithTimeout(orgID, projectID, deployID string, timeout time.Duration) error {
 	path := fmt.Sprintf("/api/v1/orgs/%s/projects/%s/deployments/%s", orgID, projectID, deployID)
 	lastStatus := ""
 	start := time.Now()
 	dots := 0
+	ci := ciMode()
 
 	terminal := []string{"success", "failed", "cancelled", "error", "timeout"}
 	isTerminal := func(s string) bool {
@@ -833,6 +846,7 @@ func pollDeploymentWithTimeout(orgID, projectID, deployID string, timeout time.D
 		if time.Since(start) > timeout {
 			fmt.Println()
 			fmt.Println("Timed out waiting for deployment (use --timeout to extend)")
+			ciFailSummary(deployID, "timed out waiting for the deployment")
 			os.Exit(1)
 		}
 
@@ -847,24 +861,34 @@ func pollDeploymentWithTimeout(orgID, projectID, deployID string, timeout time.D
 				emoji = "·"
 			}
 			elapsed := time.Since(start).Round(time.Second)
-			fmt.Printf("\r%s  %s  %s\n", emoji, d.Status, elapsed)
+			if ci {
+				fmt.Printf("[%s] %s\n", elapsed, d.Status) // one plain line per change
+			} else {
+				fmt.Printf("\r%s  %s  %s\n", emoji, d.Status, elapsed)
+			}
 			lastStatus = d.Status
-		} else {
+		} else if !ci {
 			dots = (dots + 1) % 4
 			fmt.Printf("\r  %s%s", lastStatus, strings.Repeat(".", dots+1)+"   ")
 		}
 
 		if isTerminal(d.Status) {
 			elapsed := time.Since(start).Round(time.Second)
-			if d.Status == "failed" {
-				fmt.Printf("\nDeployment failed after %s. Check logs:\n", elapsed)
+			if d.Status != "success" {
+				fmt.Printf("\nDeployment %s after %s. Check logs:\n", d.Status, elapsed)
 				fmt.Printf("  capsule deployments logs --org %s --project %s --id %s\n", orgID, projectID, deployID)
-				return fmt.Errorf("deployment failed")
+				ciFailSummary(deployID, "deployment "+d.Status)
+				return fmt.Errorf("deployment %s", d.Status)
 			}
-			fmt.Printf("\n✅  %s  %s\n", d.Status, elapsed)
+			if ci {
+				fmt.Printf("\nDeployment %s in %s\n", d.Status, elapsed)
+			} else {
+				fmt.Printf("\n✅  %s  %s\n", d.Status, elapsed)
+			}
 			// Fetch project info for URL + domain hints
 			var projInfo struct {
 				Slug       string `json:"slug"`
+				URL        string `json:"url"`
 				DeployType string `json:"deploy_type"`
 			}
 			projPath := fmt.Sprintf("/api/v1/orgs/%s/projects/%s", orgID, projectID)
@@ -873,10 +897,27 @@ func pollDeploymentWithTimeout(orgID, projectID, deployID string, timeout time.D
 				if cfg != nil {
 					appsDomain = cfg.AppsDomain
 				}
+				if os.Getenv("CAPSULE_APPS_DOMAIN") != "" {
+					appsDomain = os.Getenv("CAPSULE_APPS_DOMAIN")
+				}
+				if ci && appsDomain == "" && projInfo.URL == "" {
+					fmt.Fprintln(os.Stderr, "warning: public URL unknown (set CAPSULE_APPS_DOMAIN); omitting url output")
+					ciSuccessSummary(deployID, "", elapsed)
+					return nil
+				}
 				if appsDomain == "" {
 					appsDomain = "apps.your-domain.com"
 				}
 				appURL := fmt.Sprintf("https://%s.%s", projInfo.Slug, appsDomain)
+				if projInfo.URL != "" {
+					appURL = projInfo.URL
+				}
+				lastDeployURL = appURL
+				if ci {
+					fmt.Printf("URL: %s\n", appURL)
+					ciSuccessSummary(deployID, appURL, elapsed)
+					return nil
+				}
 				fmt.Println()
 				fmt.Printf("  🌐  %s\n", appURL)
 				fmt.Println()
@@ -884,6 +925,8 @@ func pollDeploymentWithTimeout(orgID, projectID, deployID string, timeout time.D
 				fmt.Printf("    1. Point your DNS:  CNAME  your-domain.com  →  %s.%s\n", projInfo.Slug, appsDomain)
 				fmt.Printf("    2. capsule domains add --org %s --project %s --domain your-domain.com\n", orgID, projectID)
 				fmt.Printf("    3. capsule domains verify --org %s --project %s --domain-id <id>\n", orgID, projectID)
+			} else if ci {
+				ciSuccessSummary(deployID, "", elapsed)
 			}
 			return nil
 		}
@@ -897,7 +940,16 @@ func pollDeploymentWithTimeout(orgID, projectID, deployID string, timeout time.D
 var deployCmd = &cobra.Command{
 	Use:   "deploy",
 	Short: "Deploy current project",
-	Long:  "Deploy the project linked to the current directory. Runs interactive setup if not yet linked.",
+	Long: `Deploy the project linked to the current directory. Runs interactive setup if not yet linked.
+
+Non-interactive use (CI): set CAPSULE_TOKEN (a cap_ token), CAPSULE_ORG_ID,
+CAPSULE_PROJECT_ID and CAPSULE_API_URL; no config file or .capsule.json needed.
+On GitHub Actions (GITHUB_ACTIONS=true) output is plain, the metadata (ref,
+sha, actor, run URL, PR) is filled automatically, "url=" and "deployment-id="
+are written to $GITHUB_OUTPUT and a summary to $GITHUB_STEP_SUMMARY.`,
+	Example: `  capsule deploy
+  capsule deploy --env API_URL=https://api.example.com --env DEBUG=1
+  capsule deploy --env-file .env.production --ref main --sha $(git rev-parse HEAD)`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cwd, _ := os.Getwd()
 		// Prefer CAPSULE_CWD injected by the Node.js wrapper (bin/capsule.js)
@@ -906,58 +958,100 @@ var deployCmd = &cobra.Command{
 			cwd = envDir
 		}
 		yes, _ := cmd.Flags().GetBool("yes")
+		ci := ciMode()
+		batch := nonInteractive()
+
+		// Deploy-only variables and metadata (validated before any network call).
+		envFile, _ := cmd.Flags().GetString("env-file")
+		envPairs, _ := cmd.Flags().GetStringArray("env")
+		deployEnv, err := collectDeployEnv(envFile, envPairs)
+		if err != nil {
+			return err
+		}
+		meta := githubMeta()
+		if v, _ := cmd.Flags().GetString("ref"); v != "" {
+			meta.Ref = v
+		}
+		if v, _ := cmd.Flags().GetString("sha"); v != "" {
+			meta.SHA = v
+		}
+		if v, _ := cmd.Flags().GetString("pr"); v != "" {
+			meta.PR = v
+		}
+
+		// Uncommitted changes: only meaningful for local use.
+		if !ci {
+			if n := os.Getenv("CAPSULE_GIT_DIRTY"); n != "" && n != "0" {
+				if os.Getenv("CAPSULE_SOURCE_ARCHIVE") != "" {
+					fmt.Fprintf(os.Stderr, "warning: %s uncommitted change(s) in the working tree; they are INCLUDED in this deploy (working-tree upload)\n", n)
+				} else {
+					fmt.Fprintf(os.Stderr, "warning: %s uncommitted change(s) in the working tree; they are NOT included (source is git HEAD). Commit first\n", n)
+				}
+			}
+		}
 
 		// Confirm deploy directory
-		if !yes && !confirm(fmt.Sprintf("? Deploy from %q?", cwd), true) {
+		if !yes && !batch && !confirm(fmt.Sprintf("? Deploy from %q?", cwd), true) {
 			return fmt.Errorf("aborted")
 		}
 		fmt.Println()
 
-		// Resolve project config
+		// Resolve project config: flags > CAPSULE_* env > .capsule.json > interactive.
 		orgFlag, _ := cmd.Flags().GetString("org")
 		projFlag, _ := cmd.Flags().GetString("project")
+		envOrg, envProj := envOrgProject()
+		if orgFlag == "" {
+			orgFlag = envOrg
+		}
+		if projFlag == "" {
+			projFlag = envProj
+		}
 
 		var pc *config.ProjectConfig
 
 		if orgFlag != "" && projFlag != "" {
 			pc = &config.ProjectConfig{OrgID: orgFlag, ProjectID: projFlag}
 
-			// Fetch project name to populate config (best-effort)
-			var projListResp struct {
-				Data []projectItem `json:"data"`
-			}
-			if err := apiClient.Get(fmt.Sprintf("/api/v1/orgs/%s/projects", orgFlag), &projListResp); err == nil {
-				for _, p := range projListResp.Data {
-					if p.ID == projFlag {
-						pc.ProjectName = p.Name
-						break
+			// Best-effort names, and (when not scripted) a .capsule.json link.
+			if !batch {
+				var projListResp struct {
+					Data []projectItem `json:"data"`
+				}
+				if err := apiClient.Get(fmt.Sprintf("/api/v1/orgs/%s/projects", orgFlag), &projListResp); err == nil {
+					for _, p := range projListResp.Data {
+						if p.ID == projFlag {
+							pc.ProjectName = p.Name
+							break
+						}
 					}
 				}
-			}
-
-			// Fetch org name (best-effort)
-			var orgsResp struct {
-				Data []orgItem `json:"data"`
-			}
-			if err := apiClient.Get("/api/v1/orgs", &orgsResp); err == nil {
-				for _, o := range orgsResp.Data {
-					if o.ID == orgFlag {
-						pc.OrgName = o.Name
-						break
+				var orgsResp struct {
+					Data []orgItem `json:"data"`
+				}
+				if err := apiClient.Get("/api/v1/orgs", &orgsResp); err == nil {
+					for _, o := range orgsResp.Data {
+						if o.ID == orgFlag {
+							pc.OrgName = o.Name
+							break
+						}
 					}
 				}
-			}
-
-			// Save .capsule.json so future runs don't need flags
-			if err := config.SaveProjectConfig(cwd, pc); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: could not save .capsule.json: %v\n", err)
-			} else {
-				fmt.Println("  ✓ Linked — .capsule.json created")
+				if err := config.SaveProjectConfig(cwd, pc); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not save .capsule.json: %v\n", err)
+				} else {
+					fmt.Println("  ✓ Linked — .capsule.json created")
+				}
+			} else if found, _, ferr := config.FindProjectConfig(cwd); ferr == nil {
+				// Keep deploy settings (type, build strategy) from .capsule.json if present.
+				found.OrgID, found.ProjectID = orgFlag, projFlag
+				pc = found
 			}
 		} else {
 			found, _, err := config.FindProjectConfig(cwd)
 			if err == nil {
 				pc = found
+			} else if batch {
+				return fmt.Errorf("no project: pass --org/--project, set CAPSULE_ORG_ID and CAPSULE_PROJECT_ID, or add .capsule.json")
 			} else {
 				// Interactive setup flow
 				pc, err = runSetupFlow(cwd)
@@ -970,6 +1064,12 @@ var deployCmd = &cobra.Command{
 		// Git info
 		sha := gitSHA()
 		branch := gitBranch()
+		if meta.SHA != "" {
+			sha = meta.SHA
+		}
+		if meta.Ref != "" {
+			branch = meta.Ref
+		}
 
 		// Show what we're deploying
 		name := pc.ProjectName
@@ -981,9 +1081,17 @@ var deployCmd = &cobra.Command{
 			fmt.Printf(" (%s)", branch)
 		}
 		if sha != "" {
-			fmt.Printf(" @ %s", sha)
+			fmt.Printf(" @ %s", shortSHA(sha))
 		}
 		fmt.Println()
+		if len(deployEnv) > 0 {
+			keys := make([]string, 0, len(deployEnv))
+			for k := range deployEnv {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			fmt.Printf("  Deploy-only variables: %s\n", strings.Join(keys, ", "))
+		}
 		fmt.Println()
 
 		// --- Upload flow ---
@@ -1038,22 +1146,34 @@ var deployCmd = &cobra.Command{
 
 		// --- Trigger deployment ---
 		fmt.Println("  Triggering deployment...")
-		body := map[string]string{
+		body := map[string]interface{}{
 			"version":        "cli",
 			"git_sha":        sha,
 			"branch":         branch,
 			"source_key":     sourceKey,
 			"build_strategy": pc.DeployType,
 		}
+		if len(deployEnv) > 0 {
+			body["env"] = deployEnv
+		}
+		if !meta.empty() {
+			body["meta"] = meta
+		}
 		var resp deployment
 		if err := apiClient.Post(
 			fmt.Sprintf("/api/v1/orgs/%s/projects/%s/deployments", pc.OrgID, pc.ProjectID),
 			body, &resp,
 		); err != nil {
+			ciFailSummary("", err.Error())
 			return err
 		}
+		setGHOutput("deployment-id", resp.ID)
 
-		fmt.Printf("⏳  queued  0s\n")
+		if ci {
+			fmt.Printf("Deployment %s queued\n", resp.ID)
+		} else {
+			fmt.Printf("⏳  queued  0s\n")
+		}
 
 		// Parse --timeout flag (default 10m)
 		timeoutStr, _ := cmd.Flags().GetString("timeout")
@@ -1081,6 +1201,10 @@ func init() {
 	deployCmd.Flags().String("org", "", "Org ID (overrides .capsule.json)")
 	deployCmd.Flags().String("project", "", "Project ID (overrides .capsule.json)")
 	deployCmd.Flags().String("sha", "", "Git SHA override")
+	deployCmd.Flags().StringArray("env", nil, "Deploy-only variable KEY=VALUE (repeatable; overrides project and account vars for this deployment only)")
+	deployCmd.Flags().String("env-file", "", "Read deploy-only variables from a .env file")
+	deployCmd.Flags().String("ref", "", "Git ref (branch or tag) to record in deployment metadata")
+	deployCmd.Flags().String("pr", "", "Pull request number to record in deployment metadata")
 	deployCmd.Flags().BoolP("yes", "y", false, "Skip all confirmation prompts")
 	deployCmd.Flags().String("timeout", "10m", "Maximum time to wait for deployment (e.g. 5m, 30m, 1h)")
 	rootCmd.AddCommand(deployCmd)

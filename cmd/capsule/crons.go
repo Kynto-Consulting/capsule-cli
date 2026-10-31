@@ -55,7 +55,9 @@ var cronsListCmd = &cobra.Command{
 			Status    string  `json:"status"`
 			NextRunAt *string `json:"next_run_at"`
 		}
-		var resp struct{ Data []cronItem `json:"data"` }
+		var resp struct {
+			Data []cronItem `json:"data"`
+		}
 		if err := apiClient.Get(fmt.Sprintf("/api/v1/orgs/%s/projects/%s/crons", orgID, projectID), &resp); err != nil {
 			return err
 		}
@@ -71,9 +73,13 @@ var cronsListCmd = &cobra.Command{
 		fmt.Fprintln(tw, "ID\tNAME\tSCHEDULE\tSTATUS\tNEXT RUN")
 		for _, c := range resp.Data {
 			id := c.ID
-			if len(id) > 8 { id = id[:8] }
+			if len(id) > 8 {
+				id = id[:8]
+			}
 			next := "-"
-			if c.NextRunAt != nil { next = *c.NextRunAt }
+			if c.NextRunAt != nil {
+				next = *c.NextRunAt
+			}
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", id, c.Name, c.Schedule, c.Status, next)
 		}
 		return tw.Flush()
@@ -89,8 +95,12 @@ var cronsGetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		id, err := resolveIDPrefix(fmt.Sprintf("/api/v1/orgs/%s/projects/%s/crons", orgID, projectID), "cron job", args[0])
+		if err != nil {
+			return err
+		}
 		var resp map[string]any
-		if err := apiClient.Get(fmt.Sprintf("/api/v1/orgs/%s/projects/%s/crons/%s", orgID, projectID, args[0]), &resp); err != nil {
+		if err := apiClient.Get(fmt.Sprintf("/api/v1/orgs/%s/projects/%s/crons/%s", orgID, projectID, id), &resp); err != nil {
 			return err
 		}
 		out, _ := cmd.Flags().GetString("output")
@@ -119,7 +129,11 @@ var cronsDeleteCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if err := apiClient.Delete(fmt.Sprintf("/api/v1/orgs/%s/projects/%s/crons/%s", orgID, projectID, args[0])); err != nil {
+		id, err := resolveIDPrefix(fmt.Sprintf("/api/v1/orgs/%s/projects/%s/crons", orgID, projectID), "cron job", args[0])
+		if err != nil {
+			return err
+		}
+		if err := apiClient.Delete(fmt.Sprintf("/api/v1/orgs/%s/projects/%s/crons/%s", orgID, projectID, id)); err != nil {
 			return err
 		}
 		fmt.Println("Cron job deleted")
@@ -136,8 +150,12 @@ var cronsTriggerCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		id, err := resolveIDPrefix(fmt.Sprintf("/api/v1/orgs/%s/projects/%s/crons", orgID, projectID), "cron job", args[0])
+		if err != nil {
+			return err
+		}
 		var resp map[string]any
-		if err := apiClient.Post(fmt.Sprintf("/api/v1/orgs/%s/projects/%s/crons/%s/trigger", orgID, projectID, args[0]), nil, &resp); err != nil {
+		if err := apiClient.Post(fmt.Sprintf("/api/v1/orgs/%s/projects/%s/crons/%s/trigger", orgID, projectID, id), nil, &resp); err != nil {
 			return err
 		}
 		fmt.Println("Cron job triggered")

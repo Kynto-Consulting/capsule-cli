@@ -104,8 +104,12 @@ var workersGetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		id, err := resolveIDPrefix(fmt.Sprintf("/api/v1/orgs/%s/projects/%s/workers", orgID, projectID), "worker", args[0])
+		if err != nil {
+			return err
+		}
 
-		path := fmt.Sprintf("/api/v1/orgs/%s/projects/%s/workers/%s", orgID, projectID, args[0])
+		path := fmt.Sprintf("/api/v1/orgs/%s/projects/%s/workers/%s", orgID, projectID, id)
 		var resp map[string]any
 		if err := apiClient.Get(path, &resp); err != nil {
 			return err
@@ -133,8 +137,12 @@ var workersDeleteCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		id, err := resolveIDPrefix(fmt.Sprintf("/api/v1/orgs/%s/projects/%s/workers", orgID, projectID), "worker", args[0])
+		if err != nil {
+			return err
+		}
 
-		path := fmt.Sprintf("/api/v1/orgs/%s/projects/%s/workers/%s", orgID, projectID, args[0])
+		path := fmt.Sprintf("/api/v1/orgs/%s/projects/%s/workers/%s", orgID, projectID, id)
 		if err := apiClient.Delete(path); err != nil {
 			return err
 		}
@@ -152,8 +160,12 @@ var workersStartCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		id, err := resolveIDPrefix(fmt.Sprintf("/api/v1/orgs/%s/projects/%s/workers", orgID, projectID), "worker", args[0])
+		if err != nil {
+			return err
+		}
 
-		path := fmt.Sprintf("/api/v1/orgs/%s/projects/%s/workers/%s/start", orgID, projectID, args[0])
+		path := fmt.Sprintf("/api/v1/orgs/%s/projects/%s/workers/%s/start", orgID, projectID, id)
 		var resp map[string]any
 		if err := apiClient.Post(path, nil, &resp); err != nil {
 			return err
@@ -172,8 +184,12 @@ var workersStopCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		id, err := resolveIDPrefix(fmt.Sprintf("/api/v1/orgs/%s/projects/%s/workers", orgID, projectID), "worker", args[0])
+		if err != nil {
+			return err
+		}
 
-		path := fmt.Sprintf("/api/v1/orgs/%s/projects/%s/workers/%s/stop", orgID, projectID, args[0])
+		path := fmt.Sprintf("/api/v1/orgs/%s/projects/%s/workers/%s/stop", orgID, projectID, id)
 		var resp map[string]any
 		if err := apiClient.Post(path, nil, &resp); err != nil {
 			return err

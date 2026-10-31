@@ -126,6 +126,12 @@ var rootCmd = &cobra.Command{
 		if cmd.Name() == "help" || cmd.Name() == "version" {
 			return nil
 		}
+		// `ci init` only talks to the API with --set-secrets; no config or prompts otherwise.
+		if cmd.Name() == "init" && cmd.Parent() != nil && cmd.Parent().Name() == "ci" {
+			if ss, _ := cmd.Flags().GetBool("set-secrets"); !ss {
+				return nil
+			}
+		}
 		c, err := config.Load()
 		if err != nil {
 			return fmt.Errorf("loading config: %w", err)
@@ -135,7 +141,14 @@ var rootCmd = &cobra.Command{
 		if apiURL == "" {
 			home, _ := os.UserHomeDir()
 			confPath := filepath.Join(home, ".capsule", "config.yaml")
-			if _, err := os.Stat(confPath); os.IsNotExist(err) {
+			if nonInteractive() {
+				// No prompts in CI / token mode: the API URL must be explicit.
+				if os.Getenv("CAPSULE_API_URL") == "" && cfg.APIURL == "http://localhost:8080" {
+					if _, err := os.Stat(confPath); os.IsNotExist(err) {
+						return fmt.Errorf("API URL not set: pass --api-url or set CAPSULE_API_URL")
+					}
+				}
+			} else if _, err := os.Stat(confPath); os.IsNotExist(err) {
 				fmt.Print("Welcome to Capsule CLI! Please configure your Capsule API URL [http://localhost:8080]: ")
 				reader := bufio.NewReader(os.Stdin)
 				text, _ := reader.ReadString('\n')
@@ -149,7 +162,9 @@ var rootCmd = &cobra.Command{
 			}
 			apiURL = cfg.APIURL
 		}
-		refreshTokenIfNeeded(apiURL)
+		if !config.TokenFromEnv() {
+			refreshTokenIfNeeded(apiURL)
+		}
 		apiClient = client.New(apiURL, cfg.Token)
 		return nil
 	},

@@ -71,6 +71,15 @@ func resolveOrgProject(cmd *cobra.Command) (string, string, error) {
 	orgID, _ := cmd.Flags().GetString("org")
 	projectID, _ := cmd.Flags().GetString("project")
 
+	// flags > CAPSULE_ORG_ID / CAPSULE_PROJECT_ID > .capsule.json
+	envOrg, envProj := envOrgProject()
+	if orgID == "" {
+		orgID = envOrg
+	}
+	if projectID == "" {
+		projectID = envProj
+	}
+
 	if orgID == "" || projectID == "" {
 		cwd, _ := os.Getwd()
 		pc, _, err := config.FindProjectConfig(cwd)

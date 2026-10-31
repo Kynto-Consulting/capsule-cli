@@ -37,10 +37,28 @@ func Load() (*Config, error) {
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
+	// Non-interactive credentials (CI): CAPSULE_* variables win over the file.
+	if v := os.Getenv("CAPSULE_TOKEN"); v != "" {
+		cfg.Token = v
+		cfg.RefreshToken = ""
+	}
+	if v := os.Getenv("CAPSULE_API_URL"); v != "" {
+		cfg.APIURL = v
+	}
+	if v := os.Getenv("CAPSULE_ORG_ID"); v != "" {
+		cfg.OrgID = v
+	}
 	return &cfg, nil
 }
 
+// TokenFromEnv reports whether credentials come from CAPSULE_TOKEN, in which
+// case the config file must not be created or rewritten with them.
+func TokenFromEnv() bool { return os.Getenv("CAPSULE_TOKEN") != "" }
+
 func Save(cfg *Config) error {
+	if TokenFromEnv() {
+		return nil // never persist an env-provided token
+	}
 	dir, err := configDir()
 	if err != nil {
 		return err

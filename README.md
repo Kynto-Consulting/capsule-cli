@@ -140,6 +140,63 @@ Add `-f` / `--follow` to any `logs` subcommand to poll continuously.
 | `capsule env pull` | Download variables to a `.env` file |
 | `capsule env push` | Upload variables from a `.env` file |
 
+
+### `vars` — Account (organization) variables
+
+Variables shared by every project of an organization. Precedence at deploy time: deploy variables (`capsule deploy --env`) > project variables (`capsule env`) > account variables.
+
+| Command | Description |
+|---------|-------------|
+| `capsule vars list [--reveal]` | List account variables (secrets masked unless `--reveal`) |
+| `capsule vars set KEY=VALUE [--secret] [--scope build\|runtime\|both]` | Create or update variables |
+| `capsule vars delete KEY` | Delete a variable |
+
+The org comes from `--org`, `CAPSULE_ORG_ID` or `.capsule.json`.
+
+### `tokens` — API tokens
+
+```bash
+# Token that can only deploy one project (for CI)
+capsule tokens create --name github-ci --scope deploy --project <project-id>
+capsule tokens list
+capsule tokens revoke <token-id>
+```
+
+### `ci init` — GitHub Actions pipeline
+
+```bash
+capsule ci init                                   # detect stack, write .github/workflows/capsule.yml
+capsule ci init --working-directory apps/web      # monorepo app
+capsule ci init --print                           # preview only
+capsule ci init --set-secrets --org <id> --project <id>   # also create the deploy token and set secrets with gh
+```
+
+Generates three jobs: `ci` (install, lint, test, build; only steps that exist in the project; Node with npm, pnpm, yarn or bun, Go, Python), `preview` on pull requests and `deploy` on push to the main branch (after `ci`, using `kynto-consulting/capsule/actions/deploy`). Capsule has no per-PR environments, so `preview` deploys to a separate preview project named by the `CAPSULE_PREVIEW_PROJECT_ID` variable and is skipped without it. Flags: `--stack`, `--branch`, `--action-ref`, `--force`, `--repo`.
+
+Secrets used by the workflow: `CAPSULE_TOKEN`, `CAPSULE_ORG_ID`, `CAPSULE_PROJECT_ID`; variable: `CAPSULE_API_URL`. See `actions/deploy/README.md` for full examples.
+
+### Deploy options and CI mode
+
+```bash
+capsule deploy --env API_URL=https://api.example.com --env DEBUG=1   # deploy-only variables, repeatable
+capsule deploy --env-file .env.production --ref main --sha $(git rev-parse HEAD) --pr 42
+```
+
+`--env`/`--env-file` apply to that deployment only and override project and account variables. `--ref`, `--sha` and `--pr` are recorded as deployment metadata; locally, `deploy` warns on stderr when the working tree has uncommitted changes.
+
+Non-interactive authentication (no `~/.capsule/config.yaml`, no `.capsule.json`, no prompts) through environment variables, which take precedence over the config file and flags win over them:
+
+| Variable | Meaning |
+|----------|---------|
+| `CAPSULE_TOKEN` | `cap_...` API token |
+| `CAPSULE_API_URL` | API base URL (required when no config file exists) |
+| `CAPSULE_ORG_ID` | Organization ID |
+| `CAPSULE_PROJECT_ID` | Project ID |
+| `CAPSULE_APPS_DOMAIN` | Apps domain, to build the public URL if the API does not return one |
+| `CAPSULE_CI=1` | Force CI mode outside GitHub Actions |
+
+On GitHub Actions (`GITHUB_ACTIONS=true`) `deploy` prints plain progress (no animation), fails with a non-zero exit code on `failed`, `cancelled`, `error` or `timeout`, prints the final URL, writes `url=` and `deployment-id=` to `$GITHUB_OUTPUT` and a summary to `$GITHUB_STEP_SUMMARY`, and fills the metadata (`ref`, `sha`, `actor`, `run_url`, `pr`) from the `GITHUB_*` variables.
+
 ### `domains` — Custom domains
 
 | Command | Description |
