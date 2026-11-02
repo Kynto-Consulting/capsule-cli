@@ -208,6 +208,30 @@ On GitHub Actions (`GITHUB_ACTIONS=true`) `deploy` prints plain progress (no ani
 
 ---
 
+### `db` and `network` — Database access and IP allowlists
+
+Tokens with scope `deploy` cannot use these commands (the API answers 403 and the CLI says so). If the backend has no `APP_SECURITY_GROUP_ID` it answers 501 and network control is unavailable. `--org`, `--project` and `CAPSULE_TOKEN` / `CAPSULE_ORG_ID` / `CAPSULE_PROJECT_ID` work as in the other commands. `<db>` is a database name or the short ID from `capsule db list`.
+
+```bash
+capsule db list
+capsule db access list mydb                       # rules + connection string (no password)
+capsule db access add mydb --cidr 203.0.113.7 --desc "office"   # bare IP becomes /32
+capsule db access add mydb --my-ip                # your current public IP as /32
+capsule db access remove mydb --cidr 203.0.113.7/32
+capsule db access remove mydb 3fa85f64            # short rule ID
+capsule db access set mydb --cidr 10.0.0.0/8 --cidr 198.51.100.7   # replaces all rules
+capsule db access add mydb --cidr 0.0.0.0/0 --allow-public         # asks to confirm (skip with --yes)
+
+capsule network show
+capsule network allow --cidr 203.0.113.0/24
+capsule network allow --my-ip
+capsule network deny --cidr 203.0.113.0/24
+capsule network set --cidr 203.0.113.0/24 --cidr 198.51.100.7
+capsule network clear                             # empty allowlist = public; asks to confirm (--yes)
+```
+
+`0.0.0.0/0` (and `::/0`) is rejected unless `--allow-public` is given on `db access`; `network` never accepts it (use `network clear`). Database connections require TLS: use `sslmode=require`.
+
 ## Global Flags
 
 | Flag | Default | Description |

@@ -1,13 +1,20 @@
 {
   "name": "@kyntocg/capsule-cli",
-  "version": "0.3.0",
-  "description": "Capsule CLI — deploy and manage your AWS infrastructure from the terminal",
+  "version": "0.5.1",
+  "description": "Capsule CLI: deploy apps, manage databases, workers and crons, account/project/deploy variables with secrets, CI/CD for GitHub Actions, and database/IP firewall control. Includes a ready-to-paste guide for AI agents.",
   "keywords": [
-    "capsule",
+    "ai-agent",
     "aws",
+    "capsule",
+    "ci-cd",
+    "cli",
     "deploy",
+    "devops",
+    "environment-variables",
+    "firewall",
+    "github-actions",
     "paas",
-    "cli"
+    "secrets"
   ],
   "license": "MIT",
   "engines": {
@@ -24,5 +31,6 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/kynto-consulting/capsule"
-  }
+  },
+  "homepage": "https://github.com/Kynto-Consulting/capsule-cli#readme"
 }
