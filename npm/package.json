@@ -1,7 +1,7 @@
 {
   "name": "@kyntocg/capsule-cli",
-  "version": "0.5.1",
-  "description": "Capsule CLI: deploy apps, manage databases, workers and crons, account/project/deploy variables with secrets, CI/CD for GitHub Actions, and database/IP firewall control. Includes a ready-to-paste guide for AI agents.",
+  "version": "0.7.3",
+  "description": "Capsule CLI: deploy apps, manage databases, workers and crons, account/project/deploy variables with secrets, CI/CD for GitHub Actions and Forgejo, Git linking, project members, previews, extra TCP ports, backups, and database/IP firewall control. Includes a ready-to-paste guide for AI agents.",
   "keywords": [
     "ai-agent",
     "aws",
@@ -12,6 +12,7 @@
     "devops",
     "environment-variables",
     "firewall",
+    "forgejo",
     "github-actions",
     "paas",
     "secrets"

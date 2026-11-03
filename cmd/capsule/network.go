@@ -229,7 +229,7 @@ func init() {
 	}
 	for _, c := range []*cobra.Command{networkAllowCmd, networkDenyCmd, networkSetCmd} {
 		c.Flags().StringSlice("cidr", nil, "IP or CIDR (a bare IP becomes /32); repeatable")
-		c.Flags().Bool("my-ip", false, "Use your current public IP (/32)")
+		c.Flags().Bool("my-ip", false, "Usa tu IP pública actual (/32 o /128; IPv4 o IPv6)")
 	}
 	networkDenyCmd.Flags().BoolP("yes", "y", false, "Skip the confirmation prompt")
 	networkClearCmd.Flags().BoolP("yes", "y", false, "Skip the confirmation prompt")

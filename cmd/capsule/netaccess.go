@@ -11,24 +11,50 @@ import (
 
 // Shared helpers for `capsule db access` and `capsule network`.
 
-// normalizeCIDR accepts "1.2.3.4" (-> 1.2.3.4/32), "::1" (-> ::1/128) or a
-// CIDR. Host bits are cleared (10.0.0.5/24 -> 10.0.0.0/24).
+// normalizeCIDR accepts an IPv4/IPv6 address or CIDR and returns the canonical
+// form (the same rules as the backend, shared test table testdata/cidr_cases.json):
+// bare address -> /32 or /128, host bits cleared, IPv6 compressed lowercase,
+// IPv4-mapped (::ffff:a.b.c.d) treated as IPv4, zones rejected, IPv4 prefixes
+// shorter than /8 and IPv6 shorter than /32 rejected (except the /0 of each family,
+// which callers gate with --allow-public).
 func normalizeCIDR(s string) (string, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return "", fmt.Errorf("empty CIDR")
+		return "", fmt.Errorf("CIDR vacío")
 	}
-	if !strings.Contains(s, "/") {
+	if strings.Contains(s, "%") {
+		return "", fmt.Errorf("no se admiten zonas (%%) en %q", s)
+	}
+	var p netip.Prefix
+	if strings.Contains(s, "/") {
+		var err error
+		if p, err = netip.ParsePrefix(s); err != nil {
+			return "", fmt.Errorf("CIDR inválido %q", s)
+		}
+	} else {
 		a, err := netip.ParseAddr(s)
 		if err != nil {
-			return "", fmt.Errorf("invalid IP or CIDR %q", s)
+			return "", fmt.Errorf("IP o CIDR inválido %q", s)
 		}
-		a = a.Unmap()
-		return netip.PrefixFrom(a, a.BitLen()).String(), nil
+		p = netip.PrefixFrom(a, a.BitLen())
 	}
-	p, err := netip.ParsePrefix(s)
-	if err != nil {
-		return "", fmt.Errorf("invalid CIDR %q", s)
+	if p.Addr().Is4In6() {
+		if p.Bits() < 96 {
+			return "", fmt.Errorf("un prefijo IPv4-mapeado debe ser /96 o más largo (%q)", s)
+		}
+		p = netip.PrefixFrom(p.Addr().Unmap(), p.Bits()-96)
+	}
+	if p.Bits() == 0 {
+		if p.Addr().Is4() {
+			return "0.0.0.0/0", nil
+		}
+		return "::/0", nil
+	}
+	if p.Addr().Is4() && p.Bits() < 8 {
+		return "", fmt.Errorf("el prefijo IPv4 debe ser /8 o más largo (%q)", s)
+	}
+	if p.Addr().Is6() && p.Bits() < 32 {
+		return "", fmt.Errorf("el prefijo IPv6 debe ser /32 o más largo (%q)", s)
 	}
 	return p.Masked().String(), nil
 }
@@ -71,6 +97,20 @@ func fetchMyIP() (string, error) {
 		return "", fmt.Errorf("the API did not return your IP")
 	}
 	return r.IP, nil
+}
+
+func ipFamilyLabel(ip string) string {
+	if a, err := netip.ParseAddr(ip); err == nil && a.Unmap().Is6() {
+		return "IPv6"
+	}
+	return "IPv4"
+}
+
+func otherFamilyLabel(ip string) string {
+	if ipFamilyLabel(ip) == "IPv6" {
+		return "IPv4"
+	}
+	return "IPv6"
 }
 
 // cidrsFromFlags gathers --cidr (repeatable) and --my-ip into raw values.

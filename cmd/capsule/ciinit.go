@@ -367,8 +367,8 @@ CAPSULE_ORG_ID and CAPSULE_PROJECT_ID secrets and the CAPSULE_API_URL variable.`
   capsule ci init --set-secrets --org <org-id> --project <project-id>`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		provider, _ := cmd.Flags().GetString("provider")
-		if provider != "github" {
-			return fmt.Errorf("unsupported --provider %q (only github is supported)", provider)
+		if provider != "github" && provider != "forgejo" {
+			return fmt.Errorf("unsupported --provider %q (github or forgejo)", provider)
 		}
 		stack, _ := cmd.Flags().GetString("stack")
 		switch stack {
@@ -395,6 +395,9 @@ CAPSULE_ORG_ID and CAPSULE_PROJECT_ID secrets and the CAPSULE_API_URL variable.`
 			root = d
 		}
 		root = strings.ReplaceAll(root, "\\", "/")
+		if provider == "forgejo" {
+			return ciInitForgejo(cmd, stack, branch, sub, force, toStdout, root)
+		}
 		appDir := root
 		if sub != "" {
 			appDir = root + "/" + sub
@@ -523,7 +526,7 @@ func ciSetSecrets(cmd *cobra.Command, orgID, projectID string) error {
 }
 
 func init() {
-	ciInitCmd.Flags().String("provider", "github", "CI provider (github)")
+	ciInitCmd.Flags().String("provider", "github", "CI provider (github or forgejo)")
 	ciInitCmd.Flags().String("stack", "auto", "Stack: auto, node, node-pnpm, node-yarn, node-bun, go, python, other")
 	ciInitCmd.Flags().String("branch", "main", "Branch that deploys to production")
 	ciInitCmd.Flags().String("working-directory", "", "App directory inside the repo (monorepo); default: repo root")

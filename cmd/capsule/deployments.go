@@ -289,7 +289,7 @@ var deploymentsCancelCmd = &cobra.Command{
 
 var deploymentsRollbackCmd = &cobra.Command{
 	Use:   "rollback",
-	Short: "Roll back to the previous successful deployment",
+	Short: "Roll back to the previous successful deployment (or the last success when the newest deployment failed)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		orgID, projectID, err := resolveOrgProject(cmd)
 		if err != nil {
@@ -307,20 +307,9 @@ var deploymentsRollbackCmd = &cobra.Command{
 			return fmt.Errorf("no deployments found")
 		}
 
-		// Find the most recent 'success' deployment that is not the latest
-		var target *deploymentsAPIItem
-		skippedLatest := false
-		for i := range resp.Data {
-			d := &resp.Data[i]
-			if !skippedLatest {
-				skippedLatest = true
-				continue // skip the most recent deployment
-			}
-			if d.Status == "success" {
-				target = d
-				break
-			}
-		}
+		// Target: the last successful deployment before the one running now
+		// (or the last success when the newest attempt failed).
+		target := pickRollbackTarget(resp.Data)
 
 		if target == nil {
 			return fmt.Errorf("no previous successful deployment found to roll back to")

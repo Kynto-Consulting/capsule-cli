@@ -19,6 +19,9 @@ type Config struct {
 	RefreshToken string `mapstructure:"refresh_token"`
 	OrgID        string `mapstructure:"org_id"`
 	AppsDomain   string `mapstructure:"apps_domain"`
+	// CLISessionID names this CLI login for Git credentials (sent as cli_session_id when the
+	// session is a JWT, so `capsule logout` can revoke exactly its short-lived tokens).
+	CLISessionID string `mapstructure:"cli_session_id"`
 }
 
 func Load() (*Config, error) {
@@ -72,6 +75,7 @@ func Save(cfg *Config) error {
 	viper.Set("refresh_token", cfg.RefreshToken)
 	viper.Set("org_id", cfg.OrgID)
 	viper.Set("apps_domain", cfg.AppsDomain)
+	viper.Set("cli_session_id", cfg.CLISessionID)
 
 	return viper.WriteConfigAs(filepath.Join(dir, configFile))
 }

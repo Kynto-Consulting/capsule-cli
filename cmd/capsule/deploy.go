@@ -108,6 +108,9 @@ type deployment struct {
 	Status    string `json:"status"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
+	// Connection audit (docs/connection-audit.md)
+	ErrorMessage       string        `json:"error_message"`
+	ConnectionWarnings []connWarning `json:"connection_warnings"`
 }
 
 // ── source archive ───────────────────────────────────────────────────────────
@@ -873,6 +876,7 @@ func pollDeploymentWithTimeout(orgID, projectID, deployID string, timeout time.D
 		}
 
 		if isTerminal(d.Status) {
+			connAuditObserve(d)
 			elapsed := time.Since(start).Round(time.Second)
 			if d.Status != "success" {
 				fmt.Printf("\nDeployment %s after %s. Check logs:\n", d.Status, elapsed)
@@ -1183,7 +1187,7 @@ are written to $GITHUB_OUTPUT and a summary to $GITHUB_STEP_SUMMARY.`,
 		}
 
 		// Poll real-time
-		return pollDeploymentWithTimeout(pc.OrgID, pc.ProjectID, resp.ID, pollTimeout)
+		return connAuditFinish(cmd, pollDeploymentWithTimeout(pc.OrgID, pc.ProjectID, resp.ID, pollTimeout))
 	},
 }
 
@@ -1207,6 +1211,8 @@ func init() {
 	deployCmd.Flags().String("pr", "", "Pull request number to record in deployment metadata")
 	deployCmd.Flags().BoolP("yes", "y", false, "Skip all confirmation prompts")
 	deployCmd.Flags().String("timeout", "10m", "Maximum time to wait for deployment (e.g. 5m, 30m, 1h)")
+	deployCmd.Flags().Bool("strict-connections", false, "Exit with code 5 if the deployment has critical or warning internal connections outside the gateway")
+	deployCmd.Flags().Bool("ignore-connections", false, "Do not print the internal connections report")
 	rootCmd.AddCommand(deployCmd)
 	rootCmd.AddCommand(linkCmd)
 }

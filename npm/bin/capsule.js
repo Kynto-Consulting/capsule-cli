@@ -157,9 +157,44 @@ function git(gitArgs, cwd) {
   return r.status === 0 ? r.stdout.trim() : null
 }
 
-// Executes the gh calls queued by the CLI (`ci init --set-secrets`). Only
-// `gh secret set` and `gh variable set` are allowed; secret values travel on
-// stdin, never on the command line, and the queue file is removed afterwards.
+// Commands whose work ends in a git subprocess (`capsule git clone` and
+// friends). WASM cannot spawn processes, so the CLI queues the git commands
+// and this wrapper runs them once the CLI has exited.
+function needsGitQueue(args) {
+  if (args[0] === 'git') return ['clone', 'login', 'setup-gcm'].includes(args[1])
+  if (args[0] === 'pr') return args[1] === 'co'
+  if (args[0] === 'repo') return args[1] === 'clone'
+  return false
+}
+
+// Only these queued git commands run, and `git config` may only touch
+// credential.* keys: the queue file is a plain file in the temp directory.
+function gitActionAllowed(a) {
+  if (!Array.isArray(a.args) || a.args.some(x => typeof x !== 'string')) return false
+  const sub = a.args[0]
+  const rest = a.args.slice(1)
+  const evil = ['--upload-pack', '-u', '--receive-pack', '--exec', '--system', '--file', '-f', '--includes']
+  if (rest.some(x => evil.includes(x) || x.startsWith('--upload-pack=') || x.startsWith('--receive-pack='))) return false
+  if (sub === 'config') {
+    return (rest.includes('--global') || rest.includes('--local')) && rest.some(x => x.startsWith('credential.'))
+  }
+  if (sub === 'clone') {
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === '-c' || rest[i] === '--config') {
+        if (!(rest[i + 1] || '').startsWith('credential.')) return false
+        i++
+      }
+    }
+    return true
+  }
+  return sub === 'fetch' || sub === 'checkout'
+}
+
+// Executes the commands queued by the CLI: the gh calls of `ci init
+// --set-secrets` (only `gh secret set` and `gh variable set`; secret values
+// travel on stdin, never on the command line) and the git calls above. The
+// queue file is removed afterwards. A failing git command stops the queue and
+// becomes the exit code.
 function runPostActions(file, cwd) {
   let list = []
   try {
@@ -168,6 +203,12 @@ function runPostActions(file, cwd) {
   } catch { /* nothing queued */ }
   try { fs.unlinkSync(file) } catch {}
   for (const a of list) {
+    if (a && a.cmd === 'git') {
+      if (!gitActionAllowed(a)) { process.stderr.write('capsule: refused to run queued command\n'); process.exitCode = 1; return }
+      const r = childProcess.spawnSync('git', a.args, { cwd, stdio: 'inherit' })
+      if (r.status !== 0 && !a.ignoreError) { process.exitCode = r.status || 1; return }
+      continue
+    }
     const ok = a && a.cmd === 'gh' && Array.isArray(a.args) &&
       (a.args[0] === 'secret' || a.args[0] === 'variable') && a.args[1] === 'set'
     if (!ok) { process.stderr.write('capsule: refused to run queued command\n'); continue }
@@ -184,7 +225,11 @@ async function main() {
 
   // Pre-create archive in Node.js — bypasses Go WASM O_DIRECTORY limitation on Windows
   let archivePath = null
-  const NON_DEPLOY = new Set(['tokens', 'ci', 'vars', 'env', 'deployments'])
+  // Groups whose arguments may contain the word "deploy" without being a deploy
+  // (`workflow new --template deploy`, `promote --to deploy`, `api GET .../deploy`).
+  const NON_DEPLOY = new Set(['tokens', 'ci', 'vars', 'env', 'deployments',
+    'git', 'repo', 'pr', 'pulls', 'branch', 'workflow', 'workflows', 'runs', 'run', 'security',
+    'environments', 'envs', 'promote', 'approvals', 'webhooks', 'notifications', 'audit', 'api', 'alias'])
   const isDeployCmd = !NON_DEPLOY.has(args[0]) && args.includes('deploy')
   if (isDeployCmd) {
     archivePath = createSourceArchiveNode(cwd)
@@ -201,7 +246,17 @@ async function main() {
     if (branch) extra.CAPSULE_GIT_BRANCH = branch
     if (dirty !== null) extra.CAPSULE_GIT_DIRTY = String(dirty.split('\n').filter(Boolean).length)
   }
+  if (args[0] === 'pr' && args[1] === 'create' && !process.env.GITHUB_ACTIONS) {
+    const branch = git(['rev-parse', '--abbrev-ref', 'HEAD'], cwd)
+    if (branch) extra.CAPSULE_GIT_BRANCH = branch
+  }
   let postActionsPath = null
+  const gitQueue = needsGitQueue(args)
+  if (gitQueue) {
+    postActionsPath = path.join(os.tmpdir(), 'capsule-post-' + process.pid + '-' + Date.now() + '.json')
+    fs.writeFileSync(postActionsPath, '', { mode: 0o600 })
+    extra.CAPSULE_POST_ACTIONS = postActionsPath
+  }
   if (args[0] === 'ci' && args.includes('--set-secrets')) {
     const probe = childProcess.spawnSync('gh', ['auth', 'status'], { stdio: 'ignore' })
     if (probe.status === 0) {
@@ -226,7 +281,11 @@ async function main() {
 
   process.on('exit', code => {
     if (archivePath) { try { fs.unlinkSync(archivePath) } catch {} }
-    if (postActionsPath) runPostActions(postActionsPath, cwd)
+    if (postActionsPath) {
+      // a failed CLI must not leave queued git commands running
+      if (code === 0 || !gitQueue) runPostActions(postActionsPath, cwd)
+      else { try { fs.unlinkSync(postActionsPath) } catch {} }
+    }
     if (code === 0 && !go.exited) {
       go._pendingEvent = { id: 0 }
       go._resume()

@@ -141,10 +141,14 @@ var rootCmd = &cobra.Command{
 		if apiURL == "" {
 			home, _ := os.UserHomeDir()
 			confPath := filepath.Join(home, ".capsule", "config.yaml")
-			if nonInteractive() {
+			if nonInteractive() || isHelperInvocation(cmd) {
 				// No prompts in CI / token mode: the API URL must be explicit.
 				if os.Getenv("CAPSULE_API_URL") == "" && cfg.APIURL == "http://localhost:8080" {
 					if _, err := os.Stat(confPath); os.IsNotExist(err) {
+						if isHelperInvocation(cmd) {
+							fmt.Fprintln(os.Stderr, "capsule: not signed in: run `capsule login`")
+							return silentErr(codedErr(exitAuth, "not signed in"))
+						}
 						return fmt.Errorf("API URL not set: pass --api-url or set CAPSULE_API_URL")
 					}
 				}
@@ -176,8 +180,8 @@ func init() {
 }
 
 func main() {
+	rootCmd.SetArgs(expandAliases(os.Args[1:]))
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		exitWith(err)
 	}
 }

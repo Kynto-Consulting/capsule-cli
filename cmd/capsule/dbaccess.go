@@ -347,9 +347,9 @@ func init() {
 	}
 	for _, c := range []*cobra.Command{dbAccessAddCmd, dbAccessSetCmd} {
 		c.Flags().StringSlice("cidr", nil, "IP or CIDR (a bare IP becomes /32); repeatable")
-		c.Flags().Bool("my-ip", false, "Use your current public IP (/32)")
+		c.Flags().Bool("my-ip", false, "Usa tu IP pública actual (/32 o /128; IPv4 o IPv6)")
 		c.Flags().String("desc", "", "Description for the rule(s)")
-		c.Flags().Bool("allow-public", false, "Allow 0.0.0.0/0 (whole internet); asks for confirmation")
+		c.Flags().Bool("allow-public", false, "Permite 0.0.0.0/0 o ::/0 (todo Internet); pide confirmación")
 		c.Flags().BoolP("yes", "y", false, "Skip the confirmation prompt")
 	}
 	dbAccessRemoveCmd.Flags().String("cidr", "", "Remove the rule with this CIDR")
