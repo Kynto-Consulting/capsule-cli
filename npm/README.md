@@ -337,6 +337,18 @@ capsule alias set mine 'pr list --author @me' | list | delete NAME
 
 Notes: under the npm wrapper, `capsule git clone|login|setup-gcm` and `pr co` run `git` after the CLI exits (the wrapper only runs `git config credential.*`, `clone`, `fetch` and `checkout`). `capsule git login` writes `credential.<git-url>.helper` as `!capsule git credential` (the leading `!` is what makes Git run it as a command) plus `useHttpPath=true`; on Linux and macOS it also puts Git's in-memory `cache --timeout=3000` in front so Git does not request a token per command. `capsule deployments rollback` now picks the last successful deployment before the one running (or the last success when the newest deployment failed).
 
+### Gateway: `connect`, `tunnel` and `ssh` (native binary only)
+
+```
+capsule connect capsule://mi-proyecto/db --listen 127.0.0.1:5433     # local tunnel (default 127.0.0.1:0)
+capsule connect mi-proyecto/db --exec -- psql -U app midb             # injects PGHOST/PGPORT (and DATABASE_URL if set)
+capsule connect --stdio capsule://mi-proyecto/ssh                     # one connection on stdin/stdout (SSH ProxyCommand)
+capsule tunnel mi-proyecto/db --listen 127.0.0.1:5433                 # same as connect --listen
+capsule ssh mi-proyecto/ssh -l deploy [-- ssh args]                   # ssh through the gateway; --print shows the ~/.ssh/config block
+```
+
+Protocol `capsule/1` (TLS 1.3, ALPN `capsule/1`, `docs/gateway/PROTOCOL.md`). The token comes from `CAPSULE_GATEWAY_TOKEN`, `CAPSULE_TOKEN` or the stored login (a `cap_`, `cgt_`, `cgc_` or `cgs_` token; with only a user session the CLI requests a single-use `cgc_`) and is never printed or placed in a URI or command line. `CAPSULE_GATEWAY_ZONE` sets the zone, `CAPSULE_GATEWAY_CA_FILE` pins a private CA. `?transport=udp` URIs forward UDP. Exit codes: 2 usage, 3 no credentials, 4 not authorized or IP denied, 5 quota, 6 timeout, 1 network/service unavailable; with `--exec` and `ssh` the child's exit code is passed through. These commands open sockets and run processes, so they need the native binary: the WebAssembly build shipped by the npm package stops with an explanatory message (exit 1); with the npm wrapper set `CAPSULE_NATIVE_BIN` to the native binary and the wrapper delegates `connect`, `tunnel` and `ssh` to it. The Go library is `github.com/kynto-consulting/capsule/cli/pkg/gatewayclient`.
+
 ## Global Flags
 
 | Flag | Default | Description |

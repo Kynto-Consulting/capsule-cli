@@ -11,16 +11,57 @@ import (
 
 var portsCmd = &cobra.Command{
 	Use:   "ports",
-	Short: "Extra TCP ports of the project (private by default)",
-	Long: `Publishes extra TCP ports of the project container on the platform host.
-A port is private (nobody can connect) until you allow IPs/CIDRs. Changing the
-list restarts the container.`,
+	Short: "Extra TCP and UDP ports of the project (private by default)",
+	Long: `Publishes extra TCP or UDP ports of the project container on the platform host
+(direct ports, no tunnel). A port is private (nobody can connect) until you
+allow IPs/CIDRs. The same number can be published on tcp and udp at once; add
+--udp (or --protocol udp) to every command that targets the UDP one. Changing
+the list restarts the container.
+
+UDP has no SNI or Host header, so a UDP service reaches the gateway only through
+a capsule:// URI; the direct UDP port is the secondary method.`,
+}
+
+// portProto resolves --protocol / --udp to "tcp" or "udp" ("" flags mean tcp).
+func portProto(cmd *cobra.Command) (string, error) {
+	f := cmd.Flags()
+	raw, _ := f.GetString("protocol")
+	udp, _ := f.GetBool("udp")
+	raw = strings.ToLower(strings.TrimSpace(raw))
+	if raw == "" {
+		raw = "tcp"
+	}
+	if raw != "tcp" && raw != "udp" {
+		return "", fmt.Errorf("--protocol must be tcp or udp (got %q)", raw)
+	}
+	if udp {
+		if f.Changed("protocol") && raw != "udp" {
+			return "", fmt.Errorf("--udp and --protocol %s contradict each other", raw)
+		}
+		raw = "udp"
+	}
+	return raw, nil
+}
+
+// portProtoOf returns the protocol of a listed port ("" from older servers is tcp).
+func portProtoOf(p rec) string {
+	if s := strings.ToLower(str(p, "protocol")); s != "" {
+		return s
+	}
+	return "tcp"
+}
+
+func protoQuery(proto string) string {
+	if proto == "udp" {
+		return "?protocol=udp"
+	}
+	return ""
 }
 
 func fetchPorts(base string) (rec, []rec, error) {
 	var r rec
 	if err := apiClient.Get(base+"/ports", &r); err != nil {
-		return nil, nil, platErr(err, "extra TCP ports")
+		return nil, nil, platErr(err, "extra TCP/UDP ports")
 	}
 	var ports []rec
 	if a, ok := r["ports"].([]any); ok {
@@ -37,7 +78,7 @@ func putPorts(base string, ports []rec) error {
 	if ports == nil {
 		ports = []rec{}
 	}
-	return platErr(apiClient.Put(base+"/ports", rec{"ports": ports}, nil), "extra TCP ports")
+	return platErr(apiClient.Put(base+"/ports", rec{"ports": ports}, nil), "extra TCP/UDP ports")
 }
 
 func cidrEntries(cidrs []string, desc string) []rec {
@@ -72,9 +113,14 @@ func portCIDRs(cmd *cobra.Command) ([]string, bool, error) {
 	return cidrs, pub, nil
 }
 
-func portByContainer(ports []rec, n string) (int, rec) {
+// portByContainer finds the tcp port with that container number.
+func portByContainer(ports []rec, n string) (int, rec) { return portByKey(ports, n, "tcp") }
+
+// portByKey finds the port with that container number and protocol: the same
+// number may exist on tcp and udp at once.
+func portByKey(ports []rec, n, proto string) (int, rec) {
 	for i, p := range ports {
-		if str(p, "container_port") == n {
+		if str(p, "container_port") == n && portProtoOf(p) == proto {
 			return i, p
 		}
 	}
@@ -105,22 +151,52 @@ var portsListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		filter, _ := cmd.Flags().GetString("protocol")
+		filter = strings.ToLower(strings.TrimSpace(filter))
+		if udp, _ := cmd.Flags().GetBool("udp"); udp {
+			filter = "udp"
+		}
+		if filter != "" && filter != "tcp" && filter != "udp" {
+			return fmt.Errorf("--protocol must be tcp or udp (got %q)", filter)
+		}
+		if filter != "" {
+			var kept []rec
+			for _, p := range ports {
+				if portProtoOf(p) == filter {
+					kept = append(kept, p)
+				}
+			}
+			ports = kept
+			if a, ok := r["ports"].([]any); ok {
+				out := make([]any, 0, len(a))
+				for _, it := range a {
+					if m, ok := it.(map[string]any); ok && portProtoOf(m) == filter {
+						out = append(out, it)
+					}
+				}
+				r["ports"] = out
+			}
+		}
 		if wantJSON(cmd) {
 			return printJSON(r)
 		}
 		host := str(r, "address_host")
 		if len(ports) == 0 {
-			fmt.Println("No extra ports. Add one with: capsule ports add --container 8080 --my-ip")
+			if filter != "" {
+				fmt.Printf("No extra %s ports. Add one with: capsule ports add --container 8080 --protocol %s --my-ip\n", strings.ToUpper(filter), filter)
+			} else {
+				fmt.Println("No extra ports. Add one with: capsule ports add --container 8080 --my-ip (or --udp for a UDP port)")
+			}
 			return nil
 		}
 		w := newTW()
-		fmt.Fprintln(w, "NAME\tCONTAINER\tADDRESS\tACCESS\tALLOWED")
+		fmt.Fprintln(w, "NAME\tPROTO\tCONTAINER\tADDRESS\tACCESS\tALLOWED")
 		for _, p := range ports {
 			addr := str(p, "host_port")
 			if host != "" && addr != "" {
 				addr = host + ":" + addr
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", str(p, "name"), str(p, "container_port"), addr, str(p, "access"), cidrList(p))
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", str(p, "name"), portProtoOf(p), str(p, "container_port"), addr, str(p, "access"), cidrList(p))
 		}
 		return w.Flush()
 	},
@@ -128,15 +204,20 @@ var portsListCmd = &cobra.Command{
 
 var portsAddCmd = &cobra.Command{
 	Use:   "add --container PORT",
-	Short: "Publish an extra TCP port (private unless you allow IPs)",
+	Short: "Publish an extra TCP or UDP port (private unless you allow IPs)",
 	Example: `  capsule ports add --container 5432 --name pg --my-ip
   capsule ports add --container 8080 --cidr 203.0.113.0/24 --cidr 198.51.100.7
-  capsule ports add --container 9000                 # private: nobody can connect yet`,
+  capsule ports add --container 9000                 # private: nobody can connect yet
+  capsule ports add --container 7777 --udp --name game --my-ip   # UDP (same as --protocol udp)`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		f := cmd.Flags()
 		cp, _ := f.GetInt("container")
 		if cp < 1 || cp > 65535 {
 			return fmt.Errorf("--container must be a port between 1 and 65535")
+		}
+		proto, err := portProto(cmd)
+		if err != nil {
+			return err
 		}
 		name, _ := f.GetString("name")
 		cidrs, pub, err := portCIDRs(cmd)
@@ -148,7 +229,7 @@ var portsAddCmd = &cobra.Command{
 			return err
 		}
 		if pub {
-			if err := abortUnless(cmd, fmt.Sprintf("Port %d will be reachable from the WHOLE INTERNET. Continue?", cp)); err != nil {
+			if err := abortUnless(cmd, fmt.Sprintf("Port %d/%s will be reachable from the WHOLE INTERNET. Continue?", cp, proto)); err != nil {
 				return err
 			}
 		}
@@ -156,13 +237,13 @@ var portsAddCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if i, _ := portByContainer(ports, fmt.Sprint(cp)); i >= 0 {
-			return fmt.Errorf("container port %d is already published; use `capsule ports access add`", cp)
+		if i, _ := portByKey(ports, fmt.Sprint(cp), proto); i >= 0 {
+			return fmt.Errorf("container port %d/%s is already published; use `capsule ports access add`", cp, proto)
 		}
 		if name == "" {
 			name = fmt.Sprintf("port-%d", cp)
 		}
-		entry := rec{"name": name, "container_port": cp, "protocol": "tcp", "access": "private", "cidrs": []rec{}}
+		entry := rec{"name": name, "container_port": cp, "protocol": proto, "access": "private", "cidrs": []rec{}}
 		desc, _ := f.GetString("desc")
 		switch {
 		case pub:
@@ -174,7 +255,7 @@ var portsAddCmd = &cobra.Command{
 		if err := putPorts(base, append(ports, entry)); err != nil {
 			return err
 		}
-		fmt.Printf("Port %d published as %s (the container restarts). See the address with: capsule ports list\n", cp, entry["access"])
+		fmt.Printf("Port %d/%s published as %s (the container restarts). See the address with: capsule ports list\n", cp, proto, entry["access"])
 		return nil
 	},
 }
@@ -187,6 +268,10 @@ var portsRemoveCmd = &cobra.Command{
 		if cp < 1 {
 			return fmt.Errorf("--container is required")
 		}
+		proto, err := portProto(cmd)
+		if err != nil {
+			return err
+		}
 		base, err := projBase(cmd)
 		if err != nil {
 			return err
@@ -195,17 +280,17 @@ var portsRemoveCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		i, _ := portByContainer(ports, fmt.Sprint(cp))
+		i, _ := portByKey(ports, fmt.Sprint(cp), proto)
 		if i < 0 {
-			return fmt.Errorf("container port %d is not published", cp)
+			return fmt.Errorf("container port %d/%s is not published", cp, proto)
 		}
-		if err := abortUnless(cmd, fmt.Sprintf("Unpublish port %d? The container restarts.", cp)); err != nil {
+		if err := abortUnless(cmd, fmt.Sprintf("Unpublish port %d/%s? The container restarts.", cp, proto)); err != nil {
 			return err
 		}
 		if err := putPorts(base, append(ports[:i], ports[i+1:]...)); err != nil {
 			return err
 		}
-		fmt.Printf("Port %d removed.\n", cp)
+		fmt.Printf("Port %d/%s removed.\n", cp, proto)
 		return nil
 	},
 }
@@ -222,6 +307,10 @@ var portsAccessAddCmd = &cobra.Command{
 	Example: `  capsule ports access add 5432 --my-ip --desc "laptop"
   capsule ports access add 8080 --cidr 203.0.113.0/24`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		proto, err := portProto(cmd)
+		if err != nil {
+			return err
+		}
 		cidrs, pub, err := portCIDRs(cmd)
 		if err != nil {
 			return err
@@ -230,7 +319,7 @@ var portsAccessAddCmd = &cobra.Command{
 			return fmt.Errorf("use --cidr <ip/cidr> or --my-ip")
 		}
 		if pub {
-			if err := abortUnless(cmd, fmt.Sprintf("Port %s will be reachable from the WHOLE INTERNET. Continue?", args[0])); err != nil {
+			if err := abortUnless(cmd, fmt.Sprintf("Port %s/%s will be reachable from the WHOLE INTERNET. Continue?", args[0], proto)); err != nil {
 				return err
 			}
 		}
@@ -247,10 +336,13 @@ var portsAccessAddCmd = &cobra.Command{
 			if isPublicCIDR(c) {
 				body["allow_public"] = true
 			}
-			if err := apiClient.Post(base+"/ports/"+args[0]+"/access", body, nil); err != nil {
-				return platErr(err, "extra TCP ports")
+			if proto == "udp" {
+				body["protocol"] = "udp"
 			}
-			fmt.Printf("Allowed %s on port %s\n", c, args[0])
+			if err := apiClient.Post(base+"/ports/"+args[0]+"/access", body, nil); err != nil {
+				return platErr(err, "extra TCP/UDP ports")
+			}
+			fmt.Printf("Allowed %s on port %s/%s\n", c, args[0], proto)
 		}
 		return nil
 	},
@@ -261,6 +353,10 @@ var portsAccessRemoveCmd = &cobra.Command{
 	Short: "Remove an access rule (short rule ID or the CIDR)",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		proto, err := portProto(cmd)
+		if err != nil {
+			return err
+		}
 		base, err := projBase(cmd)
 		if err != nil {
 			return err
@@ -269,9 +365,9 @@ var portsAccessRemoveCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		_, p := portByContainer(ports, args[0])
+		_, p := portByKey(ports, args[0], proto)
 		if p == nil {
-			return fmt.Errorf("container port %s is not published", args[0])
+			return fmt.Errorf("container port %s/%s is not published", args[0], proto)
 		}
 		var rules []rec
 		if a, ok := p["cidrs"].([]any); ok {
@@ -303,8 +399,8 @@ var portsAccessRemoveCmd = &cobra.Command{
 			}
 			id = str(r, "id")
 		}
-		if err := apiClient.Delete(base + "/ports/" + args[0] + "/access/" + id); err != nil {
-			return platErr(err, "extra TCP ports")
+		if err := apiClient.Delete(base + "/ports/" + args[0] + "/access/" + id + protoQuery(proto)); err != nil {
+			return platErr(err, "extra TCP/UDP ports")
 		}
 		fmt.Println("Rule removed.")
 		return nil
@@ -504,6 +600,10 @@ func init() {
 		c.Flags().Bool("allow-public", false, "Permite 0.0.0.0/0 o ::/0 (pide confirmación)")
 		c.Flags().String("desc", "", "Description of the rule")
 		c.Flags().BoolP("yes", "y", false, "Skip the confirmation prompt")
+	}
+	for _, c := range []*cobra.Command{portsAddCmd, portsRemoveCmd, portsAccessAddCmd, portsAccessRemoveCmd, portsListCmd} {
+		c.Flags().String("protocol", "", "tcp or udp (default tcp; on list, filters by protocol)")
+		c.Flags().Bool("udp", false, "Shorthand for --protocol udp")
 	}
 	portsAddCmd.Flags().Int("container", 0, "Container port to publish")
 	portsAddCmd.Flags().String("name", "", "Port name")

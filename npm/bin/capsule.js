@@ -223,6 +223,18 @@ async function main() {
   const cwd  = process.cwd()
   const args = process.argv.slice(2)
 
+  // `connect`, `tunnel` and `ssh` open TCP/TLS sockets and spawn processes, which the
+  // WebAssembly build cannot do. When CAPSULE_NATIVE_BIN points to the native capsule
+  // binary, hand the whole command line (and the environment, token included) to it.
+  if (['connect', 'tunnel', 'ssh'].includes(args[0]) && process.env.CAPSULE_NATIVE_BIN) {
+    const r = childProcess.spawnSync(process.env.CAPSULE_NATIVE_BIN, args, { stdio: 'inherit' })
+    if (r.error) {
+      process.stderr.write('capsule: could not run CAPSULE_NATIVE_BIN (' + r.error.code + ')\n')
+      process.exit(1)
+    }
+    process.exit(r.status === null ? 1 : r.status)
+  }
+
   // Pre-create archive in Node.js — bypasses Go WASM O_DIRECTORY limitation on Windows
   let archivePath = null
   // Groups whose arguments may contain the word "deploy" without being a deploy
