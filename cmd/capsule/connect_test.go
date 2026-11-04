@@ -242,13 +242,17 @@ func TestTokenResolutionOrder(t *testing.T) {
 func TestMintConnectionTokenFromSession(t *testing.T) {
 	var gotPath, gotAuth string
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/orgs/"+orgUUID+"/projects" {
+			json.NewEncoder(w).Encode(map[string]any{"data": []map[string]string{{"id": projUUID, "slug": "mi-proyecto"}}})
+			return
+		}
 		gotPath, gotAuth = r.URL.Path, r.Header.Get("Authorization")
 		json.NewEncoder(w).Encode(map[string]string{"token": "cgc_" + strings.Repeat("9", 60), "expires_at": "2030-01-01T00:00:00Z"})
 	}))
 	defer api.Close()
 	t.Setenv(envGatewayToken, "")
 	t.Setenv("CAPSULE_TOKEN", "")
-	cfg = &config.Config{Token: "eyJhbGciOiJIUzI1NiJ9.e30.firma"}
+	cfg = &config.Config{Token: "eyJhbGciOiJIUzI1NiJ9.e30.firma", OrgID: orgUUID}
 	apiClient = client.New(api.URL, cfg.Token)
 	defer func() { cfg, apiClient = nil, nil }()
 	u, _ := gw.ParseURI("capsule://mi-proyecto/db", "")
@@ -260,7 +264,7 @@ func TestMintConnectionTokenFromSession(t *testing.T) {
 	if err != nil || !strings.HasPrefix(tok, "cgc_") {
 		t.Fatalf("%v", err)
 	}
-	if gotPath != "/api/v1/projects/mi-proyecto/gateway/services/db/connection-token" || gotAuth != "Bearer "+cfg.Token {
+	if gotPath != "/api/v1/orgs/"+orgUUID+"/projects/"+projUUID+"/gateway/services/db/connection-token" || gotAuth != "Bearer "+cfg.Token {
 		t.Fatalf("petición: %s %q", gotPath, gotAuth)
 	}
 }
@@ -306,7 +310,7 @@ func TestSSHProxyCommand(t *testing.T) {
 		t.Fatal(win)
 	}
 	args := sshArgs(u, posix, "deploy", []string{"-i", "k", "uptime"})
-	want := []string{"-o", "ProxyCommand=" + posix, "-o", "HostKeyAlias=mi-proyecto-ssh.capsule", "-l", "deploy", "-i", "k", "uptime", "mi-proyecto-ssh.capsule"}
+	want := []string{"-o", "ProxyCommand=" + posix, "-o", "HostKeyAlias=mi-proyecto-ssh.capsule", "-l", "deploy", "-i", "k", "mi-proyecto-ssh.capsule", "uptime"}
 	if fmt.Sprint(args) != fmt.Sprint(want) {
 		t.Fatalf("%v", args)
 	}
@@ -331,5 +335,25 @@ func TestRequireNativeAndGatewayExit(t *testing.T) {
 	err := gatewayExit(errors.New("algo raro"))
 	if exitCodeOf(err) != exitGeneric || !strings.Contains(err.Error(), "algo raro") {
 		t.Fatal(err)
+	}
+}
+
+const (
+	orgUUID  = "11111111-1111-4111-8111-111111111111"
+	projUUID = "22222222-2222-4222-8222-222222222222"
+)
+
+func TestSSHArgsOrder(t *testing.T) {
+	u, _ := gw.ParseURI("capsule://mi-proyecto/ssh", "")
+	a := sshArgs(u, "PROXY", "deploy", []string{"-i", "key", "-p", "22", "uptime", "-a"})
+	want := []string{"-o", "ProxyCommand=PROXY", "-o", "HostKeyAlias=mi-proyecto-ssh.capsule", "-l", "deploy", "-i", "key", "-p", "22", "mi-proyecto-ssh.capsule", "uptime", "-a"}
+	if fmt.Sprint(a) != fmt.Sprint(want) {
+		t.Fatalf("%v", a)
+	}
+	if a := sshArgs(u, "P", "", []string{"uptime"}); a[len(a)-2] != "mi-proyecto-ssh.capsule" || a[len(a)-1] != "uptime" {
+		t.Fatalf("%v", a)
+	}
+	if a := sshArgs(u, "P", "", nil); a[len(a)-1] != "mi-proyecto-ssh.capsule" {
+		t.Fatalf("%v", a)
 	}
 }

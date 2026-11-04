@@ -405,3 +405,23 @@ func TestVectorsHexBinFiles(t *testing.T) {
 	}
 	t.Logf("%d vectores con .hex y .bin verificados", count)
 }
+
+func TestEncodePaddingLimit(t *testing.T) {
+	base := Request{Transport: 1, Project: "p", Service: "s", AuthType: 1, Auth: "cap_" + strings.Repeat("A", 40)}
+	for _, n := range []int{-1, 256, 1000} {
+		r := base
+		r.Padding = n
+		if _, err := EncodeRequest(r); !errors.Is(err, ErrInvalidField) {
+			t.Fatalf("relleno %d debe rechazarse: %v", n, err)
+		}
+	}
+	r := base
+	r.Padding = 255
+	b, err := EncodeRequest(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d, n, err := DecodeRequest(b, true); err != nil || n != len(b) || d.IgnoredTLVs != 1 {
+		t.Fatal(err)
+	}
+}

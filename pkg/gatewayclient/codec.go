@@ -84,7 +84,7 @@ type Request struct {
 	Auth      string
 	Nonce     []byte // nil o 16 bytes (TLV 0x01)
 	ClientID  string // "" = sin TLV 0x02
-	Padding   int    // bytes de relleno (TLV 0x80) al codificar; se reparte en TLV de <=255
+	Padding   int    // bytes de relleno (TLV 0x80) al codificar; 0..255 (una TLV 0x80); mayor se rechaza
 	// Resultado de la decodificación:
 	IgnoredTLVs int
 }
@@ -119,6 +119,9 @@ func EncodeRequest(r Request) ([]byte, error) {
 	if r.Nonce != nil && len(r.Nonce) != 16 {
 		return nil, fmt.Errorf("%w: nonce", ErrInvalidField)
 	}
+	if r.Padding < 0 || r.Padding > 255 {
+		return nil, fmt.Errorf("%w: relleno fuera de 0..255 bytes", ErrInvalidField)
+	}
 	if r.ClientID != "" && !validClientID(r.ClientID) {
 		return nil, fmt.Errorf("%w: client_id", ErrInvalidField)
 	}
@@ -139,14 +142,9 @@ func EncodeRequest(r Request) ([]byte, error) {
 		b = append(b, 0x02, byte(len(r.ClientID)))
 		b = append(b, r.ClientID...)
 	}
-	for pad := r.Padding; pad > 0; {
-		n := pad
-		if n > 255 {
-			n = 255
-		}
-		b = append(b, 0x80, byte(n))
-		b = append(b, make([]byte, n)...)
-		pad -= n
+	if r.Padding > 0 {
+		b = append(b, 0x80, byte(r.Padding))
+		b = append(b, make([]byte, r.Padding)...)
 	}
 	if len(b) > maxHdrLen {
 		return nil, fmt.Errorf("%w: encabezado de %d bytes (máx. %d)", ErrInvalidField, len(b), maxHdrLen)

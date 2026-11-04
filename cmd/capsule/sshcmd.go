@@ -41,17 +41,40 @@ func proxyCommand(exe, raw, zone, goos string) string {
 	return strings.Join(parts, " ")
 }
 
+// splitSSHExtra separa las opciones de ssh del comando remoto: el primer argumento que no
+// es opción (ni valor de una opción con argumento) empieza el comando remoto.
+func splitSSHExtra(extra []string) (opts, remote []string) {
+	withArg := "BEIJLOQRSWbcDeFIiJLlmOopWw"
+	for i := 0; i < len(extra); i++ {
+		a := extra[i]
+		if a == "--" {
+			return extra[:i], extra[i+1:]
+		}
+		if len(a) < 2 || a[0] != '-' {
+			return extra[:i], extra[i:]
+		}
+		if len(a) == 2 && strings.ContainsRune(withArg, rune(a[1])) && i+1 < len(extra) {
+			i++
+		}
+	}
+	return extra, nil
+}
+
 func sshAlias(u *gw.URI) string { return u.Project + "-" + u.Service + ".capsule" }
 
 // sshArgs devuelve los argumentos de ssh (sin el ejecutable).
+// extra: opciones de ssh seguidas, opcionalmente, del comando remoto. Orden final:
+// opciones propias, opciones del usuario, alias (host) y por último el comando remoto.
 func sshArgs(u *gw.URI, proxy, user string, extra []string) []string {
 	alias := sshAlias(u)
 	a := []string{"-o", "ProxyCommand=" + proxy, "-o", "HostKeyAlias=" + alias}
 	if user != "" {
 		a = append(a, "-l", user)
 	}
-	a = append(a, extra...)
-	return append(a, alias)
+	opts, remote := splitSSHExtra(extra)
+	a = append(a, opts...)
+	a = append(a, alias)
+	return append(a, remote...)
 }
 
 // sshConfigBlock es el bloque para ~/.ssh/config.

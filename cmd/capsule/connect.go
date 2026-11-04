@@ -135,16 +135,28 @@ func gatewayTokenSource(u *gw.URI) (gw.TokenSource, error) {
 
 // mintConnectionToken pide un cgc_ de vida corta (POST .../connection-token).
 func mintConnectionToken(u *gw.URI) (string, error) {
+	return mintConnectionTokenFor(cfg.OrgID, u)
+}
+
+// mintConnectionTokenFor usa la ruta real del backend:
+// POST /api/v1/orgs/{org}/projects/{proyecto}/gateway/services/{servicio}/connection-token
+// (org y proyecto como UUID; el slug del proyecto se resuelve con la lista de la organización).
+func mintConnectionTokenFor(orgID string, u *gw.URI) (string, error) {
+	if orgID == "" {
+		return "", errors.New("falta la organización: define CAPSULE_ORG_ID o org_id en ~/.capsule/config.yaml")
+	}
 	project := u.Project
-	if cfg.OrgID != "" {
-		if id, err := resolveProjectID(cfg.OrgID, u.Project); err == nil {
-			project = id
+	if !looksLikeUUID(project) {
+		id, err := resolveProjectID(orgID, u.Project)
+		if err != nil {
+			return "", fmt.Errorf("no se pudo resolver el proyecto: %w", err)
 		}
+		project = id
 	}
 	var out struct {
 		Token string `json:"token"`
 	}
-	path := fmt.Sprintf("/api/v1/projects/%s/gateway/services/%s/connection-token", url.PathEscape(project), url.PathEscape(u.Service))
+	path := fmt.Sprintf("/api/v1/orgs/%s/projects/%s/gateway/services/%s/connection-token", url.PathEscape(orgID), url.PathEscape(project), url.PathEscape(u.Service))
 	if err := apiClient.Post(path, struct{}{}, &out); err != nil {
 		return "", fmt.Errorf("no se pudo obtener un token de conexión del servidor: %w", err)
 	}
@@ -473,4 +485,20 @@ Requiere el binario nativo de capsule. Ver también: capsule connect --help.`, t
 
 func init() {
 	rootCmd.AddCommand(connectCmd, tunnelCmd)
+}
+
+func looksLikeUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, c := range s {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if c != '-' {
+				return false
+			}
+		} else if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return false
+		}
+	}
+	return true
 }
