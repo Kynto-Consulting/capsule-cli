@@ -12,7 +12,9 @@ import (
 	mrand "math/rand/v2"
 	"net"
 	"net/netip"
+	"os"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -393,7 +395,14 @@ func dialOnce(ctx context.Context, u *URI, o *Options, transport byte, token str
 	case "6":
 		network = "tcp6"
 	}
-	addr := net.JoinHostPort(u.ConnectHost, strconv.Itoa(u.ConnectPort))
+	// CAPSULE_GATEWAY_PORT replaces the entry port (443): staging and pre-production gateways listen elsewhere.
+	port := u.ConnectPort
+	if v := strings.TrimSpace(os.Getenv("CAPSULE_GATEWAY_PORT")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n < 65536 {
+			port = n
+		}
+	}
+	addr := net.JoinHostPort(u.ConnectHost, strconv.Itoa(port))
 	var raw net.Conn
 	if o.DialContext != nil {
 		raw, err = o.DialContext(ctx, network, addr)
