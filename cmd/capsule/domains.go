@@ -11,15 +11,25 @@ import (
 // ── API types ────────────────────────────────────────────────────────────────
 
 type domainItem struct {
-	ID                string `json:"id"`
-	DomainName        string `json:"domain_name"`
-	Status            string `json:"status"`
-	RecordType        string `json:"record_type"`
-	RecordValue       string `json:"record_value"`
-	VerificationToken string `json:"verification_token"`
-	SSLEnabled        bool   `json:"ssl_enabled"`
-	DNSProvider       string `json:"dns_provider"`
-	VerifiedAt        string `json:"verified_at"`
+	ID                string      `json:"id"`
+	DomainName        string      `json:"domain_name"`
+	Status            string      `json:"status"`
+	RecordType        string      `json:"record_type"`
+	RecordValue       string      `json:"record_value"`
+	VerificationToken string      `json:"verification_token"`
+	SSLEnabled        bool        `json:"ssl_enabled"`
+	DNSProvider       string      `json:"dns_provider"`
+	VerifiedAt        string      `json:"verified_at"`
+	Instructions      string      `json:"instructions"`
+	Message           string      `json:"message"`
+	DNSRecords        []dnsRecord `json:"dns_records"`
+}
+
+// dnsRecord is a record to create when Capsule runs without a load balancer (Caddy ingress).
+type dnsRecord struct {
+	Type  string `json:"type"`
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 // ── commands ──────────────────────────────────────────────────────────────────
@@ -83,22 +93,34 @@ var domainsAddCmd = &cobra.Command{
 		dnsType, _ := cmd.Flags().GetString("type")
 		redirectTo, _ := cmd.Flags().GetString("redirect-to")
 
-		dnsProvider := "custom"
+		dnsProvider := "external"
 		if dnsType == "redirect" && redirectTo != "" {
 			dnsProvider = "redirect:" + redirectTo
 		}
 
 		body := map[string]interface{}{
-			"domain_name": domain,
+			"domain_name":  domain,
 			"dns_provider": dnsProvider,
-			"record_type": "CNAME",
-			"ssl_enabled": true,
+			"record_type":  "CNAME",
+			"ssl_enabled":  true,
 		}
 
 		var result domainItem
 		path := fmt.Sprintf("/api/v1/orgs/%s/projects/%s/domains", orgID, projectID)
 		if err := apiClient.Post(path, body, &result); err != nil {
 			return fmt.Errorf("adding domain: %w", err)
+		}
+
+		if len(result.DNSRecords) > 0 {
+			fmt.Println("Dominio añadido. Crea en tu DNS:")
+			fmt.Println()
+			for _, rec := range result.DNSRecords {
+				fmt.Printf("  %-6s %s  ->  %s\n", rec.Type, rec.Name, rec.Value)
+			}
+			fmt.Println()
+			fmt.Println("El certificado HTTPS se emite automáticamente en la primera visita.")
+			fmt.Printf("Luego ejecuta: capsule domains verify %s\n", result.ID)
+			return nil
 		}
 
 		recordValue := result.RecordValue
@@ -135,6 +157,7 @@ var domainsVerifyCmd = &cobra.Command{
 
 		var result struct {
 			Verified bool   `json:"verified"`
+			Status   string `json:"status"`
 			Message  string `json:"message"`
 		}
 		path := fmt.Sprintf("/api/v1/orgs/%s/projects/%s/domains/%s/verify", orgID, projectID, id)
@@ -142,6 +165,14 @@ var domainsVerifyCmd = &cobra.Command{
 			return fmt.Errorf("verifying domain: %w", err)
 		}
 
+		if result.Status == "pending_dns" || result.Status == "failed" {
+			fmt.Printf("✗ %s\n", result.Message)
+			return nil
+		}
+		if result.Status == "active" && result.Message != "" {
+			fmt.Printf("✓ %s\n", result.Message)
+			return nil
+		}
 		if result.Verified {
 			fmt.Println("✓ Domain verified")
 		} else {
