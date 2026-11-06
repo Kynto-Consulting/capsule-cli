@@ -23,6 +23,7 @@ func fnBase(cmd *cobra.Command) (string, error) {
 type fnFunction struct {
 	Name           string   `json:"name"`
 	Image          string   `json:"image"`
+	Runtime        string   `json:"runtime"`
 	Cron           string   `json:"cron"`
 	MemoryMB       int      `json:"memory_mb"`
 	TimeoutSeconds int      `json:"timeout_seconds"`
@@ -52,6 +53,8 @@ var fnDeployCmd = &cobra.Command{
 	Long: `Example:
   capsule fn deploy migrar --image registry/migrar:1 --vpn estudio --cron "0 2 * * *" --memory 512m --timeout 2h \
       --scope api:importacion --scope storage:biblioteca
+With --runtime lambda the function runs as its own AWS Lambda: each invocation is capped at 15 minutes, so the function must honour
+ctx.batch.remainingMs() and return {continue: cursor}; Capsule re-invokes it with the cursor and a new token until it is done.
 Scopes are explicit (api:<name>, storage:<name>, db:<name>); there are no wildcards. Runs go one at a time unless --concurrency says otherwise.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -69,7 +72,8 @@ Scopes are explicit (api:<name>, storage:<name>, db:<name>); there are no wildca
 		cpus, _ := f.GetFloat64("cpus")
 		conc, _ := f.GetInt("concurrency")
 		scopes, _ := f.GetStringSlice("scope")
-		body := map[string]any{"name": args[0], "image": image, "entry": entry, "vpn": vpn, "cron": cron, "memory": mem,
+		runtime, _ := f.GetString("runtime")
+		body := map[string]any{"name": args[0], "image": image, "entry": entry, "runtime": runtime, "vpn": vpn, "cron": cron, "memory": mem,
 			"timeout": timeout, "cpus": cpus, "max_concurrency": conc, "scopes": scopes}
 		var resp fnFunction
 		if err := apiClient.Post(base+"/functions", body, &resp); err != nil {
@@ -78,7 +82,7 @@ Scopes are explicit (api:<name>, storage:<name>, db:<name>); there are no wildca
 		if wantJSON(cmd) {
 			return printJSON(resp)
 		}
-		fmt.Printf("Function %s deployed (memory %dm, timeout %ds, concurrency %d, scopes %s)\n", resp.Name, resp.MemoryMB, resp.TimeoutSeconds, resp.MaxConcurrency, strings.Join(resp.Scopes, ","))
+		fmt.Printf("Function %s deployed (runtime %s, memory %dm, timeout %ds, concurrency %d, scopes %s)\n", resp.Name, resp.Runtime, resp.MemoryMB, resp.TimeoutSeconds, resp.MaxConcurrency, strings.Join(resp.Scopes, ","))
 		return nil
 	},
 }
@@ -99,9 +103,9 @@ var fnListCmd = &cobra.Command{
 			return printJSON(list)
 		}
 		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "NAME\tIMAGE\tCRON\tMEMORY\tTIMEOUT\tSCOPES")
+		fmt.Fprintln(tw, "NAME\tRUNTIME\tIMAGE\tCRON\tMEMORY\tTIMEOUT\tSCOPES")
 		for _, x := range list {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%dm\t%ds\t%s\n", x.Name, x.Image, x.Cron, x.MemoryMB, x.TimeoutSeconds, strings.Join(x.Scopes, ","))
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%dm\t%ds\t%s\n", x.Name, x.Runtime, x.Image, x.Cron, x.MemoryMB, x.TimeoutSeconds, strings.Join(x.Scopes, ","))
 		}
 		return tw.Flush()
 	},
@@ -222,6 +226,7 @@ func init() {
 	f := fnDeployCmd.Flags()
 	f.String("image", "", "container image of the function (built from @kyntocg/capsule-fn)")
 	f.String("entry", "", "command inside the image (default: the image entrypoint)")
+	f.String("runtime", "container", "where it runs: container (on the work node, no time cap) or lambda (its own AWS Lambda, resumable batches of 13 min)")
 	f.String("vpn", "", "attach the project's tunnel by name")
 	f.String("cron", "", "5-field cron expression (UTC)")
 	f.String("memory", "512m", "memory limit (no swap)")
