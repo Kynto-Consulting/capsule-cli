@@ -30,6 +30,7 @@ type fnFunction struct {
 	MaxConcurrency int      `json:"max_concurrency"`
 	Scopes         []string `json:"scopes"`
 	Enabled        bool     `json:"enabled"`
+	Build          *fnBuild `json:"build,omitempty"` // first build when deployed with --source
 }
 
 type fnRun struct {
@@ -49,10 +50,15 @@ var fnCmd = &cobra.Command{Use: "fn", Short: "Functions that run inside the proj
 
 var fnDeployCmd = &cobra.Command{
 	Use:   "deploy <name>",
-	Short: "Define a function: image, tunnel, schedule, limits and the scopes its runs may use",
+	Short: "Define a function: image (or a directory Capsule builds), tunnel, schedule, limits and the scopes its runs may use",
 	Long: `Example:
   capsule fn deploy migrar --image registry/migrar:1 --vpn estudio --cron "0 2 * * *" --memory 512m --timeout 2h \
       --scope api:importacion --scope storage:biblioteca
+  capsule fn deploy copiar --source ./copiar --runtime lambda --vpn estudio --scope storage:biblioteca
+With --source <dir> (instead of --image) Capsule packs the directory like capsule deploy, builds its Dockerfile on its builder
+(queued, one build at a time) and pushes the image to the registry it manages for the function; the command follows the build log
+(--no-wait to return at once). For --runtime lambda the Dockerfile must end in FROM public.ecr.aws/lambda/nodejs. New image later:
+capsule fn build <name> --source <dir>; history: capsule fn builds <name>; log: capsule fn build-log <id>.
 With --runtime lambda the function runs as its own AWS Lambda: each invocation is capped at 15 minutes, so the function must honour
 ctx.batch.remainingMs() and return {continue: cursor}; Capsule re-invokes it with the cursor and a new token until it is done.
 Scopes are explicit (api:<name>, storage:<name>, db:<name>); there are no wildcards. Runs go one at a time unless --concurrency says otherwise.`,
@@ -73,11 +79,29 @@ Scopes are explicit (api:<name>, storage:<name>, db:<name>); there are no wildca
 		conc, _ := f.GetInt("concurrency")
 		scopes, _ := f.GetStringSlice("scope")
 		runtime, _ := f.GetString("runtime")
+		source, _ := f.GetString("source")
+		if (image == "") == (source == "") {
+			return fmt.Errorf("give exactly one of --image <uri> or --source <dir>")
+		}
 		body := map[string]any{"name": args[0], "image": image, "entry": entry, "runtime": runtime, "vpn": vpn, "cron": cron, "memory": mem,
 			"timeout": timeout, "cpus": cpus, "max_concurrency": conc, "scopes": scopes}
+		if source != "" {
+			key, err := uploadFnSource(base, source, wantJSON(cmd))
+			if err != nil {
+				return err
+			}
+			body["source_key"] = key
+			delete(body, "image")
+		}
 		var resp fnFunction
 		if err := apiClient.Post(base+"/functions", body, &resp); err != nil {
 			return err
+		}
+		if resp.Build != nil {
+			if !wantJSON(cmd) {
+				fmt.Printf("Function %s deployed (runtime %s); building its image (build %s)\n", resp.Name, resp.Runtime, resp.Build.ID)
+			}
+			return finishBuildCmd(cmd, base, resp.Build)
 		}
 		if wantJSON(cmd) {
 			return printJSON(resp)
@@ -224,7 +248,9 @@ func init() {
 		c.Flags().String("project", "", "Project ID (overrides .capsule.json)")
 	}
 	f := fnDeployCmd.Flags()
-	f.String("image", "", "container image of the function (built from @kyntocg/capsule-fn)")
+	f.String("image", "", "container image of the function (built from @kyntocg/capsule-fn); or use --source")
+	f.String("source", "", "directory with a Dockerfile: Capsule builds it and publishes it in the registry it manages (instead of --image)")
+	f.Bool("no-wait", false, "with --source: return once the build is queued instead of following its log")
 	f.String("entry", "", "command inside the image (default: the image entrypoint)")
 	f.String("runtime", "container", "where it runs: container (on the work node, no time cap) or lambda (its own AWS Lambda, resumable batches of 13 min)")
 	f.String("vpn", "", "attach the project's tunnel by name")
@@ -234,7 +260,6 @@ func init() {
 	f.Float64("cpus", 1, "CPU limit")
 	f.Int("concurrency", 1, "runs at the same time (default one at a time)")
 	f.StringSlice("scope", nil, "scope the run token carries: api:<name>, storage:<name>, db:<name> (repeatable)")
-	_ = fnDeployCmd.MarkFlagRequired("image")
 	fnRunCmd.Flags().String("payload", "", "JSON payload for the run")
 	fnEnqueueCmd.Flags().String("payload", "", "JSON payload for the run")
 	fnCmd.AddCommand(all...)
