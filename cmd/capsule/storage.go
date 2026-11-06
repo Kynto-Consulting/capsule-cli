@@ -23,6 +23,8 @@ var storageCmd = &cobra.Command{
   capsule storage get files/img/photo.jpg ./copy.jpg
   capsule storage presign files/img/photo.jpg --expires 1h
   capsule storage presign files/up.bin --method put
+  capsule storage sftp files                  (SFTP through the gateway; --print: scp, WinSCP, FileZilla)
+  capsule storage ssh-keys add files --file ~/.ssh/id_ed25519.pub
 
 Each bucket has its own access key and secret (capsule storage show --reveal, capsule storage rotate) and
 the connection variables are written to the project's environment (S3_*, STORAGE_<NAME>_*).`,
@@ -30,28 +32,29 @@ the connection variables are written to the project's environment (S3_*, STORAGE
 
 // storageItem is one bucket as returned by the API (own-store buckets carry the extra fields).
 type storageItem struct {
-	ID               string  `json:"id"`
-	Name             string  `json:"name"`
-	Engine           string  `json:"engine"`
-	DBName           string  `json:"db_name"`
-	Status           string  `json:"status"`
-	Host             string  `json:"host"`
-	Bucket           string  `json:"bucket"`
-	Public           bool    `json:"public"`
-	Endpoint         string  `json:"endpoint"`
-	InternalEndpoint string  `json:"internal_endpoint"`
-	Region           string  `json:"region"`
-	AccessKey        string  `json:"access_key"`
-	SecretKey        string  `json:"secret_key"`
-	UsedBytes        int64   `json:"used_bytes"`
-	Objects          int     `json:"objects"`
-	MaxBytes         *int64  `json:"max_bytes"`
-	ProjectUsedBytes int64   `json:"project_used_bytes"`
-	ProjectMaxBytes  int64   `json:"project_max_bytes"`
-	OrgUsedBytes     int64   `json:"org_used_bytes"`
-	OrgMaxBytes      int64   `json:"org_max_bytes"`
-	GatewayURL       string  `json:"gateway_url"`
-	RotatedAt        *string `json:"rotated_at"`
+	ID               string    `json:"id"`
+	Name             string    `json:"name"`
+	Engine           string    `json:"engine"`
+	DBName           string    `json:"db_name"`
+	Status           string    `json:"status"`
+	Host             string    `json:"host"`
+	Bucket           string    `json:"bucket"`
+	Public           bool      `json:"public"`
+	Endpoint         string    `json:"endpoint"`
+	InternalEndpoint string    `json:"internal_endpoint"`
+	Region           string    `json:"region"`
+	AccessKey        string    `json:"access_key"`
+	SecretKey        string    `json:"secret_key"`
+	UsedBytes        int64     `json:"used_bytes"`
+	Objects          int       `json:"objects"`
+	MaxBytes         *int64    `json:"max_bytes"`
+	ProjectUsedBytes int64     `json:"project_used_bytes"`
+	ProjectMaxBytes  int64     `json:"project_max_bytes"`
+	OrgUsedBytes     int64     `json:"org_used_bytes"`
+	OrgMaxBytes      int64     `json:"org_max_bytes"`
+	GatewayURL       string    `json:"gateway_url"`
+	SFTP             *sftpInfo `json:"sftp"`
+	RotatedAt        *string   `json:"rotated_at"`
 }
 
 func (s *storageItem) own() bool { return s.Engine == "objstore" }
@@ -192,6 +195,9 @@ func printBucket(b *storageItem, reveal bool) {
 	fmt.Printf("Internal   %s   (apps on the same server)\n", b.InternalEndpoint)
 	if b.GatewayURL != "" {
 		fmt.Printf("Gateway    %s\n", b.GatewayURL)
+	}
+	if b.SFTP != nil {
+		fmt.Printf("SFTP       %s   user %s   host key %s   (capsule storage sftp %s --print)\n", b.SFTP.GatewayURI, b.SFTP.User, b.SFTP.Fingerprint, b.Name)
 	}
 	fmt.Printf("Region     %s\n", b.Region)
 	fmt.Printf("Access key %s\n", b.AccessKey)

@@ -366,6 +366,22 @@ capsule ssh mi-proyecto/ssh -l deploy [-- ssh args]                   # ssh thro
 
 Protocol `capsule/1` (TLS 1.3, ALPN `capsule/1`, `docs/gateway/PROTOCOL.md`). The token comes from `CAPSULE_GATEWAY_TOKEN`, `CAPSULE_TOKEN` or the stored login (a `cap_`, `cgt_`, `cgc_` or `cgs_` token; with only a user session the CLI requests a single-use `cgc_`) and is never printed or placed in a URI or command line. `CAPSULE_GATEWAY_ZONE` sets the zone, `CAPSULE_GATEWAY_CA_FILE` pins a private CA. `?transport=udp` URIs forward UDP. Exit codes: 2 usage, 3 no credentials, 4 not authorized or IP denied, 5 quota, 6 timeout, 1 network/service unavailable; with `--exec` and `ssh` the child's exit code is passed through. These commands open sockets and run processes, so they need the native binary: the WebAssembly build shipped by the npm package stops with an explanatory message (exit 1); with the npm wrapper set `CAPSULE_NATIVE_BIN` to the native binary and the wrapper delegates `connect`, `tunnel` and `ssh` to it. The Go library is `github.com/kynto-consulting/capsule/cli/pkg/gatewayclient`.
 
+### Object storage: SFTP on a bucket (`storage sftp`, `storage ssh-keys`)
+
+Every bucket of Capsule's own object store can be opened with `sftp`, `scp`, WinSCP or FileZilla. The SFTP server has no public port: it is the project's `sftp` gateway service (`capsule://<project>/sftp`). The bucket looks like a tree of folders (key prefixes separated by `/`, nothing outside the bucket is reachable). User = the bucket name (or `<project>-<name>`), password = the bucket's secret key, or an SSH public key you register.
+
+```
+capsule storage sftp files                                       # runs sftp through the gateway (native binary + OpenSSH)
+capsule storage sftp files --print                               # guide: sftp, scp, ~/.ssh/config, WinSCP, FileZilla
+capsule storage ssh-keys add files --file ~/.ssh/id_ed25519.pub  # register a public key (--name laptop)
+capsule storage ssh-keys list files
+capsule storage ssh-keys rm files laptop
+sftp -o ProxyCommand="capsule connect --stdio capsule://mi-proyecto/sftp" -o HostKeyAlias=mi-proyecto-sftp.capsule <bucket>@mi-proyecto-sftp.capsule
+scp  -o ProxyCommand="capsule connect --stdio capsule://mi-proyecto/sftp" -o HostKeyAlias=mi-proyecto-sftp.capsule ./file.bin <bucket>@mi-proyecto-sftp.capsule:/folder/
+```
+
+WinSCP: protocol SFTP, host `mi-proyecto-sftp.capsule`, port 22, user = bucket, password = secret key, Advanced > Connection > Proxy > type "Local" with `capsule connect --stdio capsule://mi-proyecto/sftp`. FileZilla: run `capsule tunnel mi-proyecto/sftp --listen 127.0.0.1:2222` and connect to `127.0.0.1:2222`. Uploads can be resumed (`reput`, FileZilla "resume"); folders are created as prefix markers; renaming moves objects inside the bucket. The quotas of the bucket, project and organization apply (the upload fails with a quota error).
+
 ## Global Flags
 
 | Flag | Default | Description |
