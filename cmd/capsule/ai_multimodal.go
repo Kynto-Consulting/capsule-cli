@@ -1206,7 +1206,7 @@ func init() {
 	aiImageCmd.Flags().String("format", "", "png or jpeg")
 	aiImageCmd.Flags().String("image", "", "Input image to edit")
 	aiImageCmd.Flags().String("image-source", "", "Input image from a bucket: bucket/key")
-	aiImageCmd.Flags().String("mask", "", "Mask for inpaint (white keeps, black changes)")
+	aiImageCmd.Flags().String("mask", "", "Mask for inpaint (white changes, black keeps)")
 	aiImageCmd.Flags().String("style-image", "", "Style reference for style-transfer")
 	aiImageCmd.Flags().String("operation", "", "Edit service: inpaint, erase-object, remove-background, search-replace, search-recolor, outpaint, style-transfer, style-guide, fast-upscale, conservative-upscale, creative-upscale")
 	aiImageCmd.Flags().String("search-prompt", "", "What to find (search-replace)")
