@@ -345,6 +345,11 @@ func uploadFile(orgID, projectID string, b *storageItem, file, key, ctype string
 			return e
 		})
 		if err != nil {
+			if strings.Contains(err.Error(), "QuotaExceeded") { // resuming cannot help: free the parts already stored and forget the upload
+				_ = apiClient.Delete(base + "/uploads/" + state.UploadID)
+				_ = os.Remove(sf)
+				return fmt.Errorf("part %d/%d: %w (the partial upload was discarded)", p.Number, len(start.Parts), err)
+			}
 			return fmt.Errorf("part %d/%d failed (run the same command again to resume): %w", p.Number, len(start.Parts), err)
 		}
 		state.ETags[p.Number] = strings.Trim(h.Get("ETag"), `"`)

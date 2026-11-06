@@ -90,6 +90,8 @@ type fakeStorage struct {
 	single    map[string][]byte
 	uploadID  string
 	presigned []string
+	aborted   bool
+	quotaPart int // part number answered with QuotaExceeded
 }
 
 func newFakeStorage(t *testing.T) *fakeStorage {
@@ -159,8 +161,16 @@ func (f *fakeStorage) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		f.completed = all
 		_ = json.NewEncoder(w).Encode(map[string]any{"key": "big.bin", "size": len(all)})
+	case r.Method == "DELETE" && r.URL.Path == apiRoot+"/b1/uploads/"+f.uploadID:
+		f.aborted = true
+		w.WriteHeader(204)
 	case strings.HasPrefix(r.URL.Path, "/part/") && r.Method == "PUT":
 		n, _ := strconv.Atoi(strings.TrimPrefix(r.URL.Path, "/part/"))
+		if n == f.quotaPart {
+			w.WriteHeader(403)
+			_, _ = w.Write([]byte("<Error><Code>QuotaExceeded</Code><Message>full</Message></Error>"))
+			return
+		}
 		if n == f.failPart && !f.failed {
 			f.failed = true
 			http.Error(w, "boom", 500)
@@ -296,5 +306,27 @@ func TestS3ErrorText(t *testing.T) {
 	got := s3ErrorText([]byte(`<?xml version="1.0"?><Error><Code>QuotaExceeded</Code><Message>full</Message></Error>`))
 	if got != "QuotaExceeded: full" {
 		t.Fatal(got)
+	}
+}
+
+func TestMultipartQuotaFailureDiscardsTheUpload(t *testing.T) {
+	f := newFakeStorage(t)
+	f.quotaPart = 2
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("LocalAppData", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	data := make([]byte, 18<<20)
+	src := filepath.Join(t.TempDir(), "q.bin")
+	_ = os.WriteFile(src, data, 0o644)
+	st, _ := os.Stat(src)
+	err := uploadFile("o1", "p1", &storageItem{ID: "b1", Name: "files"}, src, "q.bin", "", 5<<20)
+	if err == nil || !strings.Contains(err.Error(), "QuotaExceeded") || !strings.Contains(err.Error(), "discarded") {
+		t.Fatalf("want a quota error that discards the upload, got %v", err)
+	}
+	if !f.aborted {
+		t.Fatal("the partial upload was not aborted on the server")
+	}
+	if _, e := os.Stat(stateFile("o1", "p1", "b1", "q.bin", src, st.Size(), st.ModTime().UnixNano())); e == nil {
+		t.Fatal("state file kept")
 	}
 }
