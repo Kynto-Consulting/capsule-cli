@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -36,6 +37,8 @@ var loginCmd = &cobra.Command{
 
 		cfg.Token = resp.Tokens.AccessToken
 		cfg.RefreshToken = resp.Tokens.RefreshToken
+		apiFlag, _ := cmd.Flags().GetString("api-url")
+		persistAPIURL(cfg, apiFlag)
 		if err := config.Save(cfg); err != nil {
 			return fmt.Errorf("saving config: %w", err)
 		}
@@ -49,4 +52,12 @@ func init() {
 	loginCmd.Flags().String("email", "", "Email address")
 	loginCmd.Flags().String("password", "", "Password")
 	rootCmd.AddCommand(loginCmd)
+}
+
+// persistAPIURL records the --api-url given to `capsule login`, so the commands that follow reach the same API
+// without repeating the flag (before, the login saved the session but not the address it belongs to).
+func persistAPIURL(c *config.Config, flagURL string) {
+	if u := strings.TrimRight(strings.TrimSpace(flagURL), "/"); u != "" {
+		c.APIURL = u
+	}
 }

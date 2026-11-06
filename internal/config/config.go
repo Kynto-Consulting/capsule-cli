@@ -43,6 +43,9 @@ func Load() (*Config, error) {
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
+	if cfg.APIURL == "" { // an empty value in the file must not hide the default
+		cfg.APIURL = defaultAPIURL
+	}
 	// Non-interactive credentials (CI): CAPSULE_* variables win over the file.
 	if v := os.Getenv("CAPSULE_TOKEN"); v != "" {
 		cfg.Token = v
