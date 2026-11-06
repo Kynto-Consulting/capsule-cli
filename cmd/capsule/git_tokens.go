@@ -184,7 +184,7 @@ func init() {
 		key := strings.TrimSpace(literal)
 		if key == "" {
 			if file == "" {
-				home, _ := os.UserHomeDir()
+				home, _ := config.HomeDir()
 				file = filepath.Join(home, ".ssh", "id_ed25519.pub")
 			}
 			b, err := os.ReadFile(file)

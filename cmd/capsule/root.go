@@ -139,7 +139,7 @@ var rootCmd = &cobra.Command{
 		cfg = c
 		apiURL, _ := cmd.Flags().GetString("api-url")
 		if apiURL == "" {
-			home, _ := os.UserHomeDir()
+			home, _ := config.HomeDir()
 			confPath := filepath.Join(home, ".capsule", "config.yaml")
 			if nonInteractive() || isHelperInvocation(cmd) {
 				// No prompts in CI / token mode: the API URL must be explicit.

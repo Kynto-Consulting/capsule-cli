@@ -31,7 +31,7 @@ func saveAliases(m map[string]string) error {
 	if _, err := config.Load(); err != nil {
 		return err
 	}
-	home, err := os.UserHomeDir()
+	home, err := config.HomeDir()
 	if err != nil {
 		return err
 	}

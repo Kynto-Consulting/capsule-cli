@@ -1,9 +1,12 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
+	"runtime"
 
 	"github.com/spf13/viper"
 )
@@ -81,9 +84,51 @@ func Save(cfg *Config) error {
 }
 
 func configDir() (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := HomeDir()
 	if err != nil {
 		return "", fmt.Errorf("finding home dir: %w", err)
 	}
 	return filepath.Join(home, ".capsule"), nil
+}
+
+// HomeDir returns the user's home directory on any device. os.UserHomeDir is tried first; when it cannot answer
+// (Go's js/wasm runtime only reads $HOME, and PowerShell/cmd define USERPROFILE instead) the other places each
+// system keeps it are tried: USERPROFILE, HOMEDRIVE+HOMEPATH, the parent of APPDATA/LOCALAPPDATA, the account
+// database, and finally /home/<user> or /Users/<user>.
+func HomeDir() (string, error) {
+	if h, err := os.UserHomeDir(); err == nil && h != "" {
+		return h, nil
+	}
+	for _, k := range []string{"HOME", "USERPROFILE"} {
+		if v := os.Getenv(k); v != "" {
+			return v, nil
+		}
+	}
+	if d, p := os.Getenv("HOMEDRIVE"), os.Getenv("HOMEPATH"); d != "" && p != "" {
+		return d + p, nil
+	}
+	// %APPDATA% = <home>\AppData\Roaming and %LOCALAPPDATA% = <home>\AppData\Local
+	for _, k := range []string{"APPDATA", "LOCALAPPDATA"} {
+		if v := os.Getenv(k); v != "" {
+			if h := filepath.Dir(filepath.Dir(filepath.Clean(v))); h != "." && h != string(filepath.Separator) {
+				return h, nil
+			}
+		}
+	}
+	if u, err := user.Current(); err == nil && u.HomeDir != "" {
+		return u.HomeDir, nil
+	}
+	for _, k := range []string{"USER", "LOGNAME", "USERNAME"} {
+		if name := os.Getenv(k); name != "" && name != "root" {
+			switch runtime.GOOS {
+			case "darwin":
+				return "/Users/" + name, nil
+			case "windows":
+				// no reliable guess without USERPROFILE
+			default:
+				return "/home/" + name, nil
+			}
+		}
+	}
+	return "", errors.New("cannot determine the home directory: set HOME (or USERPROFILE on Windows)")
 }

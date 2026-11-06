@@ -149,6 +149,13 @@ function wasmEnv(env) {
   for (const [k, v] of Object.entries(env)) {
     if (ENV_ALLOW.has(k) || k.startsWith('CAPSULE_') || GITHUB_ALLOW.has(k)) out[k] = v
   }
+  // Go's js/wasm runtime only looks at $HOME. Windows shells (PowerShell, cmd) define USERPROFILE instead, so
+  // always hand it a home directory: the one Node resolves for this device.
+  if (!out.HOME) {
+    let home = env.HOME || env.USERPROFILE
+    if (!home) { try { home = os.homedir() } catch (_) { home = '' } }
+    if (home) out.HOME = home
+  }
   return out
 }
 
