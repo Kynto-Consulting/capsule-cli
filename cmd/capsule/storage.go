@@ -196,6 +196,9 @@ func printBucket(b *storageItem, reveal bool) {
 	if b.GatewayURL != "" {
 		fmt.Printf("Gateway    %s\n", b.GatewayURL)
 	}
+	if b.SFTP != nil {
+		fmt.Printf("SFTP       %s   user %s   host key %s   (capsule storage sftp %s --print)\n", b.SFTP.GatewayURI, b.SFTP.User, b.SFTP.Fingerprint, b.Name)
+	}
 	fmt.Printf("Region     %s\n", b.Region)
 	fmt.Printf("Access key %s\n", b.AccessKey)
 	switch {
