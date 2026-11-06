@@ -13,7 +13,20 @@ import (
 
 var aiCmd = &cobra.Command{
 	Use:   "ai [optional prompt]",
-	Short: "Interactive Bedrock AI assistant",
+	Short: "AI assistant and multimodal tools: chat, transcribe, speak, images, embeddings, voice",
+	Long: `Without arguments it opens the interactive assistant; with a prompt it answers once.
+
+Multimodal tools (all work on a project; see capsule ai models for what the account can use):
+  capsule ai models [--capability stt|tts|image|embed|rerank|chat|vision|speech-to-speech|video]
+  capsule ai chat "question" --image photo.jpg [--stream]
+  capsule ai transcribe meeting.mp3 --diarize --lang es-US -o meeting.srt
+  capsule ai speak "Hola" --voice Lupe -o hola.mp3
+  capsule ai image "a red apple" --n 2 -o ./out/        (edit: --image in.png --operation remove-background)
+  capsule ai embed "text" ; capsule ai embed search "query" --bucket docs ; capsule ai rerank "query" --doc a --doc b
+  capsule ai talk question.wav -o answer.wav            (live: capsule ai talk --live, audio through pipes)
+  capsule ai usage
+
+Every command takes --json, --org and --project (default: the linked directory). Estimated cost goes to stderr.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) > 0 {
 			// Single shot query

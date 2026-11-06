@@ -50,7 +50,8 @@ func codedErr(code int, format string, a ...any) error {
 func classifyAPI(ae *client.APIError) int {
 	switch ae.Code {
 	case "PROTECTED_BRANCH", "CHECKS_REQUIRED", "REVIEWS_REQUIRED", "POLICY_BLOCKED",
-		"CODEOWNER_REQUIRED", "SELF_APPROVAL_FORBIDDEN", "SIGNATURE_REQUIRED":
+		"CODEOWNER_REQUIRED", "SELF_APPROVAL_FORBIDDEN", "SIGNATURE_REQUIRED",
+		"QUOTA_EXCEEDED", "MODEL_UNAVAILABLE", "NO_MODEL", "MODEL_ACCESS": // AI: budget spent, or the model cannot be used
 		return exitBlocked
 	case "GIT_NOT_READY", "UPSTREAM_GIT_ERROR":
 		return exitGit
@@ -143,7 +144,8 @@ const exitCodesHelp = `Exit codes (stable; safe to branch on in scripts and agen
   3  Not authenticated / invalid token
   4  Not allowed or not found (the server hides existence)
   5  Blocked by a rule: PROTECTED_BRANCH, CHECKS_REQUIRED, REVIEWS_REQUIRED,
-     POLICY_BLOCKED, CODEOWNER_REQUIRED
+     POLICY_BLOCKED, CODEOWNER_REQUIRED; AI: QUOTA_EXCEEDED (daily budget spent),
+     MODEL_UNAVAILABLE / NO_MODEL / MODEL_ACCESS (the model cannot be used: see capsule ai models)
   6  Wait timed out (--wait) or the run ended in failure with --exit-status
   7  Git not ready or engine error: GIT_NOT_READY, UPSTREAM_GIT_ERROR (and 501/5xx)
   8  Pending approval: APPROVAL_REQUIRED

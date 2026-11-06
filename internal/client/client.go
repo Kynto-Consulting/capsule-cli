@@ -125,3 +125,39 @@ func (c *Client) Get(path string, out any) error         { return c.do("GET", pa
 func (c *Client) Put(path string, body, out any) error   { return c.do("PUT", path, body, out) }
 func (c *Client) Patch(path string, body, out any) error { return c.do("PATCH", path, body, out) }
 func (c *Client) Delete(path string) error               { return c.do("DELETE", path, nil, nil) }
+
+// Raw sends a request whose body and response are not JSON (multipart uploads, audio and image downloads). It uses its own timeout
+// (0 = none) instead of the 30 s of the JSON calls. Statuses >= 400 become an *APIError like in Do; on success the caller owns resp.Body.
+func (c *Client) Raw(method, path string, body io.Reader, headers map[string]string, timeout time.Duration) (*http.Response, error) {
+	req, err := http.NewRequest(method, c.baseURL+path, body)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := (&http.Client{Timeout: timeout}).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("sending request: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		defer resp.Body.Close()
+		var apiErr struct {
+			Error struct {
+				Code      string         `json:"code"`
+				Message   string         `json:"message"`
+				RequestID string         `json:"request_id"`
+				Details   map[string]any `json:"details"`
+			} `json:"error"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&apiErr)
+		return nil, &APIError{Status: resp.StatusCode, Code: apiErr.Error.Code, Message: apiErr.Error.Message, RequestID: apiErr.Error.RequestID, Details: apiErr.Error.Details}
+	}
+	return resp, nil
+}
+
+// Token returns the bearer token the client sends ("" when there is none).
+func (c *Client) Token() string { return c.token }

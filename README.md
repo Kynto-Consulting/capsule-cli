@@ -232,6 +232,25 @@ capsule network clear                             # empty allowlist = public; as
 
 `0.0.0.0/0` (and `::/0`) is rejected unless `--allow-public` is given on `db access`; `network` never accepts it (use `network clear`). Database connections require TLS: use `sslmode=require`.
 
+### `ai` — AI assistant and multimodal tools
+
+`capsule ai` opens the interactive assistant; the subcommands cover every kind of model the account has (details: `docs/AI_MULTIMODAL.md`):
+
+```bash
+capsule ai models --capability stt --available          # live catalog by capability, with the reason when a model cannot be used
+capsule ai chat "what is in the picture?" --image photo.jpg --stream
+capsule ai transcribe meeting.mp3 --diarize --lang es-US -o meeting.srt   # .txt .srt .vtt .json
+capsule ai speak "Hola" --voice Lupe -o hola.mp3
+capsule ai image "a red apple" --n 2 -o ./out/          # edit: --image in.png --operation remove-background
+capsule ai embed search "electricity invoice" --bucket docs --top 3
+capsule ai rerank "query" --doc "a" --doc "b"
+capsule ai talk question.wav -o answer.wav              # speech to speech; --live streams through pipes
+capsule ai usage                                        # estimated spend today vs the project's daily cap
+```
+
+Every command takes `--json`, `--org` and `--project` (default: the linked directory); the estimated cost goes to stderr. Exit code 5 means the
+daily budget is spent or the model cannot be used.
+
 ### Platform features: Git, members, previews, ports, backups, OAuth
 
 These commands need a recent Capsule backend. A `404` or `501` answer means the server does not support the feature yet (the CLI says so); `403` means the token or role is not enough (tokens with scope `deploy` can only deploy). `capsule platform` shows what the server has enabled. `--org`, `--project` and `CAPSULE_TOKEN` / `CAPSULE_ORG_ID` / `CAPSULE_PROJECT_ID` work as everywhere else; list commands accept `--output json`.
