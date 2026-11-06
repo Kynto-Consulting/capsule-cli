@@ -147,6 +147,21 @@ capsule tokens list
 capsule tokens revoke <token-id>
 ```
 
+### `storage` — Object storage (S3-compatible, self-managed)
+```bash
+capsule storage create --name assets [--public]      # bucket in Capsule's own object store
+capsule storage ls|put|get|rm|presign ...             # real uploads (multipart, resumable) and downloads
+```
+Each bucket has per-project access keys (rotatable), quotas, and injects `S3_*` variables on deploy.
+
+### `vpn` and `fn` — VPN Connector and functions in the tunnel
+```bash
+capsule vpn create estudio --provider wireguard --cidr 10.48.0.0/24 --secret-stdin
+capsule vpn status estudio ; capsule vpn logs estudio
+capsule fn deploy migrar --vpn estudio --cron "0 2 * * *" --memory 512m --timeout 2h --scope api:importacion
+```
+Functions run inside the project's VPN tunnel with least-privilege scopes (`@kyntocg/capsule-fn`).
+
 ### `ci init` — GitHub Actions pipeline
 
 ```bash

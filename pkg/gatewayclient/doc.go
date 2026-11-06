@@ -34,7 +34,7 @@
 package gatewayclient
 
 // Version es la versión de la librería y el valor por defecto del client_id.
-const Version = "0.8.0"
+const Version = "0.9.0"
 
 // ALPN es el protocolo de aplicación negociado en TLS.
 const ALPN = "capsule/1"
